@@ -1,0 +1,302 @@
+<?php
+require_once __DIR__ . '/../../includes/config.php';
+require_once __DIR__ . '/../../includes/auth.php';
+require_once __DIR__ . '/../../includes/functions.php';
+requireRole('superadmin', 'admin');
+
+$pageTitle = 'Laporan';
+$db = getDB();
+
+$type     = $_GET['type'] ?? 'inventory';
+$dateFrom = $_GET['date_from'] ?? date('Y-m-01');
+$dateTo   = $_GET['date_to']   ?? date('Y-m-d');
+
+$data = [];
+
+switch ($type) {
+    case 'inventory':
+        $data = $db->query("
+            SELECT i.code, i.name, c.name as cat, c.color as cat_color,
+                   l.name as loc,
+                   i.quantity, i.quantity_available,
+                   i.`condition`, i.status,
+                   i.purchase_date, i.purchase_price
+            FROM items i
+            LEFT JOIN categories c ON i.category_id = c.id
+            LEFT JOIN locations l  ON i.location_id  = l.id
+            ORDER BY c.name, i.name
+        ")->fetchAll();
+        break;
+
+    case 'transactions':
+        $stmt = $db->prepare("
+            SELECT t.code, i.name as item_name, i.code as item_code,
+                   t.type, t.borrower_name, t.quantity,
+                   t.borrow_date, t.expected_return, t.status
+            FROM transactions t
+            JOIN items i ON t.item_id = i.id
+            WHERE DATE(t.created_at) BETWEEN ? AND ?
+            ORDER BY t.created_at DESC
+        ");
+        $stmt->execute([$dateFrom, $dateTo]);
+        $data = $stmt->fetchAll();
+        break;
+
+    case 'maintenance':
+        $stmt = $db->prepare("
+            SELECT m.code, i.name as item_name, i.code as item_code,
+                   m.title, m.type, m.priority,
+                   m.technician, m.cost, m.status, m.created_at
+            FROM maintenance m
+            JOIN items i ON m.item_id = i.id
+            WHERE DATE(m.created_at) BETWEEN ? AND ?
+            ORDER BY m.created_at DESC
+        ");
+        $stmt->execute([$dateFrom, $dateTo]);
+        $data = $stmt->fetchAll();
+        break;
+}
+
+// Summary stats
+$sumStats = [
+    'items_total'      => $db->query("SELECT COUNT(*) FROM items WHERE status='active'")->fetchColumn(),
+    'items_value'      => $db->query("SELECT SUM(purchase_price * quantity) FROM items WHERE status='active'")->fetchColumn(),
+    'borrows_month'    => $db->query("SELECT COUNT(*) FROM transactions WHERE type='borrow' AND MONTH(created_at)=MONTH(NOW()) AND YEAR(created_at)=YEAR(NOW())")->fetchColumn(),
+    'returns_month'    => $db->query("SELECT COUNT(*) FROM transactions WHERE type='borrow' AND status='returned' AND MONTH(created_at)=MONTH(NOW())")->fetchColumn(),
+    'overdue_now'      => $db->query("SELECT COUNT(*) FROM transactions WHERE type='borrow' AND status='active' AND expected_return < NOW()")->fetchColumn(),
+    'maintenance_cost' => $db->query("SELECT SUM(cost) FROM maintenance WHERE status='completed'")->fetchColumn(),
+];
+
+include __DIR__ . '/../../includes/header.php';
+?>
+
+<div class="page-header">
+  <div class="page-title">
+    <div class="breadcrumb">
+      <a href="<?= APP_URL ?>/dashboard.php">Dashboard</a>
+      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path d="M9 18l6-6-6-6"/></svg>
+      Laporan
+    </div>
+    <h2>Laporan Inventaris</h2>
+    <p>Rekap dan analisis data inventaris universitas</p>
+  </div>
+  <button onclick="window.print()" class="btn btn-outline">
+    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+    Cetak
+  </button>
+</div>
+
+<!-- Summary Cards -->
+<div class="stats-grid mb-28">
+  <div class="stat-card">
+    <div class="stat-icon indigo">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10"/></svg>
+    </div>
+    <div class="stat-info">
+      <div class="stat-value"><?= number_format($sumStats['items_total']) ?></div>
+      <div class="stat-label">Total Barang Aktif</div>
+    </div>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-icon green">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    </div>
+    <div class="stat-info">
+      <div class="stat-value" style="font-size:1.3rem;">
+        <?= $sumStats['items_value'] ? 'Rp ' . number_format($sumStats['items_value'], 0, ',', '.') : '-' ?>
+      </div>
+      <div class="stat-label">Total Nilai Aset</div>
+    </div>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-icon blue">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
+    </div>
+    <div class="stat-info">
+      <div class="stat-value"><?= $sumStats['borrows_month'] ?></div>
+      <div class="stat-label">Pinjam Bulan Ini</div>
+      <div class="stat-change"><?= $sumStats['returns_month'] ?> dikembalikan</div>
+    </div>
+  </div>
+
+  <div class="stat-card" style="<?= $sumStats['overdue_now'] > 0 ? 'border-color:rgba(239,68,68,0.3)' : '' ?>">
+    <div class="stat-icon red">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+    </div>
+    <div class="stat-info">
+      <div class="stat-value" style="<?= $sumStats['overdue_now'] > 0 ? 'color:var(--danger)' : '' ?>">
+        <?= $sumStats['overdue_now'] ?>
+      </div>
+      <div class="stat-label">Terlambat Kembali</div>
+    </div>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-icon amber">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+    </div>
+    <div class="stat-info">
+      <div class="stat-value">
+        <?= $sumStats['maintenance_cost'] ? 'Rp ' . number_format($sumStats['maintenance_cost'], 0, ',', '.') : '-' ?>
+      </div>
+      <div class="stat-label">Biaya Pemeliharaan</div>
+    </div>
+  </div>
+</div>
+
+<!-- Filter & Table -->
+<div class="card">
+  <!-- Toolbar -->
+  <div class="table-toolbar">
+    <form method="GET" style="display:contents;">
+      <div class="tabs" style="margin-bottom:0;background:transparent;border:none;padding:0;">
+        <?php foreach (['inventory' => 'Inventaris', 'transactions' => 'Transaksi', 'maintenance' => 'Pemeliharaan'] as $t => $l): ?>
+        <a href="?type=<?= $t ?>&date_from=<?= $dateFrom ?>&date_to=<?= $dateTo ?>"
+           class="tab-btn <?= $type === $t ? 'active' : '' ?>"><?= $l ?></a>
+        <?php endforeach; ?>
+      </div>
+      <?php if ($type !== 'inventory'): ?>
+      <input type="hidden" name="type" value="<?= $type ?>">
+      <input type="date" name="date_from" class="filter-select" value="<?= $dateFrom ?>">
+      <span style="color:var(--text-muted);">s/d</span>
+      <input type="date" name="date_to" class="filter-select" value="<?= $dateTo ?>">
+      <button type="submit" class="btn btn-outline btn-sm">Filter</button>
+      <?php endif; ?>
+      <span style="margin-left:auto;font-size:0.78rem;color:var(--text-muted);"><?= count($data) ?> baris data</span>
+    </form>
+  </div>
+
+  <!-- Table -->
+  <div class="table-container">
+    <?php if (empty($data)): ?>
+    <div class="empty-state">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+      <h3>Tidak ada data</h3>
+    </div>
+
+    <?php elseif ($type === 'inventory'): ?>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Barang</th>
+          <th>Kategori</th>
+          <th>Lokasi</th>
+          <th>Stok</th>
+          <th>Kondisi</th>
+          <th>Status</th>
+          <th>Tgl Beli</th>
+          <th>Harga Beli</th>
+        </tr>
+      </thead>
+      <tbody>
+        <?php foreach ($data as $row): ?>
+        <tr>
+          <td>
+            <div class="table-item-name"><?= sanitize($row['name']) ?></div>
+            <div class="table-item-code"><?= sanitize($row['code']) ?></div>
+          </td>
+          <td>
+            <?php if ($row['cat']): ?>
+            <span style="display:inline-flex;align-items:center;gap:5px;">
+              <span style="width:7px;height:7px;border-radius:50%;background:<?= sanitize($row['cat_color'] ?? '#6366f1') ?>;flex-shrink:0;"></span>
+              <?= sanitize($row['cat']) ?>
+            </span>
+            <?php else: ?>
+            <span class="text-muted">—</span>
+            <?php endif; ?>
+          </td>
+          <td><?= sanitize($row['loc'] ?? '—') ?></td>
+          <td>
+            <span style="font-weight:500;<?= $row['quantity_available'] == 0 ? 'color:var(--danger)' : ($row['quantity_available'] < 3 ? 'color:var(--warning)' : '') ?>">
+              <?= $row['quantity_available'] ?>
+            </span>
+            <span style="color:var(--text-muted);"> / <?= $row['quantity'] ?></span>
+          </td>
+          <td><?= conditionBadge($row['condition']) ?></td>
+          <td><?= statusBadge($row['status']) ?></td>
+          <td class="td-meta"><?= formatDate($row['purchase_date']) ?></td>
+          <td><?= formatRupiah($row['purchase_price']) ?></td>
+        </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+
+    <?php elseif ($type === 'transactions'):
+      $typeLabels = ['borrow' => 'Pinjam', 'return' => 'Kembali', 'transfer' => 'Transfer', 'dispose' => 'Buang'];
+    ?>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Kode</th>
+          <th>Barang</th>
+          <th>Tipe</th>
+          <th>Peminjam</th>
+          <th>Jml</th>
+          <th>Tgl Pinjam</th>
+          <th>Batas Kembali</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <?php foreach ($data as $row): ?>
+        <tr>
+          <td><span class="mono table-item-code" style="color:var(--accent-light);"><?= sanitize($row['code']) ?></span></td>
+          <td>
+            <div class="table-item-name"><?= sanitize($row['item_name']) ?></div>
+            <div class="table-item-code"><?= sanitize($row['item_code']) ?></div>
+          </td>
+          <td><span class="badge badge-secondary"><?= $typeLabels[$row['type']] ?? sanitize($row['type']) ?></span></td>
+          <td><?= sanitize($row['borrower_name'] ?? '—') ?></td>
+          <td class="td-meta"><?= $row['quantity'] ?></td>
+          <td class="td-meta"><?= formatDate($row['borrow_date']) ?></td>
+          <td class="td-meta"><?= formatDate($row['expected_return']) ?></td>
+          <td><?= statusBadge($row['status']) ?></td>
+        </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+
+    <?php elseif ($type === 'maintenance'):
+      $typeLabels = ['preventive' => 'Preventif', 'corrective' => 'Korektif', 'inspection' => 'Inspeksi'];
+    ?>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Kode</th>
+          <th>Barang</th>
+          <th>Judul</th>
+          <th>Tipe</th>
+          <th>Prioritas</th>
+          <th>Teknisi</th>
+          <th>Biaya</th>
+          <th>Status</th>
+          <th>Tgl</th>
+        </tr>
+      </thead>
+      <tbody>
+        <?php foreach ($data as $row): ?>
+        <tr>
+          <td><span class="mono table-item-code" style="color:var(--accent-light);"><?= sanitize($row['code']) ?></span></td>
+          <td>
+            <div class="table-item-name"><?= sanitize($row['item_name']) ?></div>
+            <div class="table-item-code"><?= sanitize($row['item_code']) ?></div>
+          </td>
+          <td><?= sanitize($row['title']) ?></td>
+          <td><span class="badge badge-secondary"><?= $typeLabels[$row['type']] ?? sanitize($row['type']) ?></span></td>
+          <td><?= priorityBadge($row['priority']) ?></td>
+          <td><?= sanitize($row['technician'] ?? '—') ?></td>
+          <td><?= formatRupiah($row['cost']) ?></td>
+          <td><?= statusBadge($row['status']) ?></td>
+          <td class="td-meta"><?= formatDate($row['created_at']) ?></td>
+        </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+
+    <?php endif; ?>
+  </div>
+</div>
+
+<?php include __DIR__ . '/../../includes/footer.php'; ?>
