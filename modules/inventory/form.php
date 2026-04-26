@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../includes/functions.php';
 requireRole('superadmin', 'admin');
 
 $db = getDB();
+
 $id = (int)($_GET['id'] ?? 0);
 $item = null;
 $isEdit = false;
@@ -105,21 +106,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             auditLog('UPDATE', 'inventory', $id, 'Item updated: ' . $data['name'], $oldData, $data);
             flashMessage('success', 'Barang berhasil diperbarui.');
         } else {
-            // New item: all units start as available
-            $data['quantity_available'] = $data['quantity'];
-            $data['created_by'] = $_SESSION['user_id'];
+            // Parse batch data
+            $batches = [];
+            if (!empty($_POST['unit_batches'])) {
+                $decoded = json_decode($_POST['unit_batches'], true);
+                if (is_array($decoded)) {
+                    foreach ($decoded as $b) {
+                        $bQty = max(1, (int)($b['qty'] ?? 0));
+                        $batches[] = [
+                            'qty'         => $bQty,
+                            'price'       => isset($b['price']) && $b['price'] !== '' ? abs((float)$b['price']) : null,
+                            'condition'   => in_array($b['condition'] ?? '', ['good','fair','poor']) ? $b['condition'] : 'good',
+                            'location_id' => (int)($b['location_id'] ?? 0) ?: null,
+                        ];
+                    }
+                }
+            }
 
-            $sql = "INSERT INTO items (" . implode(', ', array_map(fn($k) => "`$k`", array_keys($data))) . ") VALUES (" . implode(', ', array_fill(0, count($data), '?')) . ")";
+            if (!empty($batches)) {
+                $data['quantity'] = array_sum(array_column($batches, 'qty'));
+            }
+            $data['quantity_available'] = $data['quantity'];
+            $data['created_by']         = $_SESSION['user_id'];
+
+            $sql  = "INSERT INTO items (" . implode(', ', array_map(fn($k) => "`$k`", array_keys($data))) . ") VALUES (" . implode(', ', array_fill(0, count($data), '?')) . ")";
             $stmt = $db->prepare($sql);
             $stmt->execute(array_values($data));
             $newId = $db->lastInsertId();
 
-            // Generate all units then sync (ensures quantity_available matches actual units)
-            $created = generateMissingUnits($db, $newId, $data['code'], $data['category_id'], $data['quantity'], $data['condition'], $data['location_id']);
+            if (!empty($batches)) {
+                $offset = 0;
+                foreach ($batches as $b) {
+                    $targetTotal = $offset + $b['qty'];
+                    generateMissingUnits($db, $newId, $data['code'], $data['category_id'], $targetTotal, $b['condition'], $b['location_id']);
+                    if ($b['price'] !== null) {
+                        $db->prepare("UPDATE item_units SET purchase_price = ? WHERE item_id = ? AND unit_number > ? AND unit_number <= ?")
+                           ->execute([$b['price'], $newId, $offset, $targetTotal]);
+                    }
+                    $offset = $targetTotal;
+                }
+            } else {
+                generateMissingUnits($db, $newId, $data['code'], $data['category_id'], $data['quantity'], $data['condition'], $data['location_id']);
+            }
             syncItemAvailability($db, $newId);
 
             auditLog('CREATE', 'inventory', $newId, 'Item created: ' . $data['name']);
-            flashMessage('success', 'Barang berhasil ditambahkan. ' . $created . ' kode unit otomatis di-generate.');
+            $totalUnits = array_sum(array_column($batches, 'qty')) ?: $data['quantity'];
+            flashMessage('success', 'Barang berhasil ditambahkan dengan ' . $totalUnits . ' unit.');
         }
 
         header('Location: index.php');
@@ -171,16 +204,13 @@ include __DIR__ . '/../../includes/header.php';
           <div class="form-grid">
             <div class="form-group">
               <label class="form-label">Kode Produk <span class="required">*</span></label>
-              <div style="display:flex;gap:8px;">
+              <div style="position:relative;">
                 <input type="text" name="code" id="fieldCode" class="form-control" required
                        value="<?= sanitize($item['code'] ?? ($_POST['code'] ?? '')) ?>"
-                       placeholder="LAP001" style="text-transform:uppercase;font-family:var(--font-mono,monospace);"
-                       oninput="updateCodePreview()">
+                       placeholder="LAP-001" style="text-transform:uppercase;font-family:var(--font-mono,monospace);padding-right:72px;"
+                       oninput="onCodeInput()" <?= $isEdit ? '' : 'data-auto="1"' ?>>
                 <?php if (!$isEdit): ?>
-                <button type="button" class="btn btn-outline btn-sm" onclick="generateCode()" title="Auto-generate" style="flex-shrink:0;white-space:nowrap;">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-                  Generate
-                </button>
+                <span id="codeAutoTag" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:0.68rem;color:var(--accent-light);background:var(--bg-elevated);padding:2px 6px;border-radius:4px;pointer-events:none;">AUTO</span>
                 <?php endif; ?>
               </div>
               <span class="form-hint">Kode produk unik — kode unit dibuat otomatis dari ini</span>
@@ -272,8 +302,12 @@ include __DIR__ . '/../../includes/header.php';
 
       <!-- Stock -->
       <div class="card">
-        <div class="card-header"><div class="card-title">Jumlah &amp; Stok</div></div>
+        <div class="card-header">
+          <div class="card-title"><?= $isEdit ? 'Jumlah &amp; Stok' : 'Unit &amp; Stok' ?></div>
+          <?php if (!$isEdit): ?><span id="batchTotalBadge" style="font-size:0.78rem;color:var(--text-muted);">0 unit</span><?php endif; ?>
+        </div>
         <div class="card-body">
+          <?php if ($isEdit): ?>
           <div class="form-grid">
             <div class="form-group">
               <label class="form-label">Jumlah Total <span class="required">*</span></label>
@@ -287,6 +321,38 @@ include __DIR__ . '/../../includes/header.php';
               <span class="form-hint">Alert ketika stok di bawah nilai ini</span>
             </div>
           </div>
+          <?php else: ?>
+          <!-- Batch table untuk tambah barang baru -->
+          <input type="hidden" name="unit_batches" id="unitBatchesJson">
+          <input type="hidden" name="quantity" id="fieldQty" value="1">
+          <div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;" id="batchTable">
+              <thead>
+                <tr style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">
+                  <th style="padding:6px 8px;text-align:left;font-weight:600;">Jumlah</th>
+                  <th style="padding:6px 8px;text-align:left;font-weight:600;">Harga Beli (Rp)</th>
+                  <th style="padding:6px 8px;text-align:left;font-weight:600;">Kondisi</th>
+                  <th style="padding:6px 8px;text-align:left;font-weight:600;">Lokasi</th>
+                  <th style="padding:6px 8px;width:32px;"></th>
+                </tr>
+              </thead>
+              <tbody id="batchBody"></tbody>
+            </table>
+          </div>
+          <button type="button" onclick="addBatchRow()" class="btn btn-ghost btn-sm" style="margin-top:10px;width:100%;border:1px dashed var(--border);">
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+            Tambah Batch
+          </button>
+          <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-size:0.82rem;color:var(--text-muted);">Total unit:</span>
+            <span id="batchTotalText" style="font-size:1rem;font-weight:700;color:var(--accent-light);">0 unit</span>
+          </div>
+          <div class="form-group" style="margin-top:14px;">
+            <label class="form-label">Batas Stok Minimum</label>
+            <input type="number" name="min_stock" class="form-control" min="0" value="0">
+            <span class="form-hint">Alert ketika stok di bawah nilai ini</span>
+          </div>
+          <?php endif; ?>
         </div>
       </div>
     </div>
@@ -320,6 +386,91 @@ include __DIR__ . '/../../includes/header.php';
           <?php endif; ?>
         </div>
       </div>
+
+      <?php if ($isEdit): ?>
+      <?php
+        $unitStats = $db->prepare("SELECT status, COUNT(*) as cnt FROM item_units WHERE item_id = ? GROUP BY status");
+        $unitStats->execute([$id]);
+        $uStats = ['available'=>0,'borrowed'=>0,'reserved'=>0,'maintenance'=>0,'damaged'=>0,'disposed'=>0,'lost'=>0];
+        foreach ($unitStats->fetchAll() as $r) $uStats[$r['status']] = (int)$r['cnt'];
+        $uTotal = array_sum($uStats);
+        $uMax   = (int)$db->prepare("SELECT MAX(unit_number) FROM item_units WHERE item_id = ?")->execute([$id]) ? $db->query("SELECT MAX(unit_number) FROM item_units WHERE item_id = $id")->fetchColumn() : 0;
+      ?>
+      <!-- Tambah Unit Card (edit mode only) -->
+      <div class="card" style="border:1px solid var(--accent-dim, rgba(99,102,241,0.3));">
+        <div class="card-header" style="border-bottom:1px solid var(--accent-dim, rgba(99,102,241,0.2));">
+          <div class="card-title" style="color:var(--accent-light);">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" style="vertical-align:-2px;margin-right:4px;"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+            Tambah Unit
+          </div>
+        </div>
+        <div class="card-body">
+          <!-- Stats ringkas -->
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px;text-align:center;">
+            <div style="background:var(--bg-elevated);border-radius:var(--radius-sm);padding:10px;">
+              <div style="font-size:1.1rem;font-weight:700;color:var(--text-primary);"><?= $uTotal ?></div>
+              <div style="font-size:0.7rem;color:var(--text-muted);">Total Unit</div>
+            </div>
+            <div style="background:var(--bg-elevated);border-radius:var(--radius-sm);padding:10px;">
+              <div style="font-size:1.1rem;font-weight:700;color:var(--success);"><?= $uStats['available'] ?></div>
+              <div style="font-size:0.7rem;color:var(--text-muted);">Tersedia</div>
+            </div>
+            <div style="background:var(--bg-elevated);border-radius:var(--radius-sm);padding:10px;">
+              <div style="font-size:1.1rem;font-weight:700;color:var(--accent-light);" id="addUnitPreview"><?= $uTotal ?></div>
+              <div style="font-size:0.7rem;color:var(--text-muted);">Total Setelah</div>
+            </div>
+          </div>
+
+          <form method="POST" action="unit_save.php" id="addUnitForm">
+            <input type="hidden" name="action"    value="add_units">
+            <input type="hidden" name="item_id"   value="<?= $id ?>">
+            <input type="hidden" name="_redirect" value="form.php?id=<?= $id ?>">
+
+            <div style="display:flex;flex-direction:column;gap:14px;">
+              <div class="form-group">
+                <label class="form-label">Jumlah Unit Ditambahkan <span class="required">*</span></label>
+                <input type="number" name="add_qty" id="addQtyField" class="form-control"
+                       min="1" max="999" value="1" required
+                       oninput="document.getElementById('addUnitPreview').textContent = <?= $uTotal ?> + (parseInt(this.value)||0)">
+                <span class="form-hint">Mulai dari nomor <?= $uTotal + 1 ?> — setelah disimpan</span>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">Harga Beli Batch Ini (Rp)</label>
+                <input type="number" name="purchase_price" class="form-control" min="0" step="1"
+                       placeholder="Kosongkan jika sama dengan harga barang">
+                <span class="form-hint">Harga barang saat ini: Rp <?= number_format($item['purchase_price'] ?? 0, 0, ',', '.') ?></span>
+              </div>
+
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <div class="form-group">
+                  <label class="form-label">Kondisi</label>
+                  <select name="condition" class="form-control">
+                    <option value="good">Baik</option>
+                    <option value="fair">Cukup Baik</option>
+                    <option value="poor">Kurang Baik</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Lokasi</label>
+                  <select name="location_id" class="form-control">
+                    <option value="">— Ikut barang —</option>
+                    <?php foreach ($locations as $loc): ?>
+                    <option value="<?= $loc['id'] ?>" <?= $item['location_id'] == $loc['id'] ? 'selected' : '' ?>><?= sanitize($loc['name']) ?></option>
+                    <?php endforeach; ?>
+                  </select>
+                </div>
+              </div>
+
+              <button type="submit" class="btn btn-primary w-100">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+                Tambah Unit
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+      <?php endif; ?>
 
       <!-- Image -->
       <div class="card">
@@ -395,31 +546,21 @@ include __DIR__ . '/../../includes/header.php';
   </div>
 </form>
 
+
 <script>
+// ── Image preview ────────────────────────────────────────────
 function previewImage(input) {
   if (input.files && input.files[0]) {
     const reader = new FileReader();
     reader.onload = e => {
-      document.getElementById('imgPreview').innerHTML = `<img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;">`;
+      document.getElementById('imgPreview').innerHTML =
+        `<img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;">`;
     };
     reader.readAsDataURL(input.files[0]);
   }
 }
 
-// Generate code from selected category
-function generateCode() {
-  const catSel = document.getElementById('fieldCategory');
-  const catId  = catSel ? catSel.value : '';
-  const url    = '<?= APP_URL ?>/includes/generate_code.php?' + (catId ? 'category_id=' + catId : 'prefix=ITEM');
-  fetch(url)
-    .then(r => r.text())
-    .then(code => {
-      document.getElementById('fieldCode').value = code;
-      updateCodePreview();
-    });
-}
-
-// Category code map (passed from PHP)
+// ── Category code map ─────────────────────────────────────────
 const catCodes = <?= json_encode(
     array_column(
         $db->query("SELECT id, code FROM categories")->fetchAll(PDO::FETCH_ASSOC),
@@ -427,19 +568,60 @@ const catCodes = <?= json_encode(
     )
 ) ?>;
 
+// ── Real-time code generation ─────────────────────────────────
+<?php if (!$isEdit): ?>
+let _codeGenTimer = null;
+let _codeIsAuto   = true;
+
+function onCodeInput() {
+  const el  = document.getElementById('fieldCode');
+  const tag = document.getElementById('codeAutoTag');
+  _codeIsAuto = (el.value.trim() === '');
+  if (tag) tag.style.display = _codeIsAuto ? '' : 'none';
+  updateCodePreview();
+}
+
+function fetchAutoCode() {
+  if (!_codeIsAuto) return;
+  const catId = document.getElementById('fieldCategory')?.value || '';
+  const url   = '<?= APP_URL ?>/includes/generate_code.php?' +
+                (catId ? 'category_id=' + catId : 'prefix=ITEM');
+  fetch(url).then(r => r.text()).then(code => {
+    if (!_codeIsAuto) return;
+    const el  = document.getElementById('fieldCode');
+    const tag = document.getElementById('codeAutoTag');
+    el.value  = code.trim().toUpperCase();
+    if (tag) tag.style.display = '';
+    updateCodePreview();
+  });
+}
+
+document.getElementById('fieldCategory')?.addEventListener('change', () => {
+  clearTimeout(_codeGenTimer);
+  _codeGenTimer = setTimeout(fetchAutoCode, 150);
+});
+
+fetchAutoCode();
+<?php endif; ?>
+
+// ── Code preview ──────────────────────────────────────────────
 function updateCodePreview() {
   const codeEl = document.getElementById('fieldCode');
   const catEl  = document.getElementById('fieldCategory');
-  const qtyEl  = document.getElementById('fieldQty');
   const box    = document.getElementById('unitPreviewBox');
   const cnt    = document.getElementById('unitPreviewCount');
   if (!codeEl || !box) return;
 
-  const code = codeEl.value.trim().toUpperCase();
-  const catId = catEl ? catEl.value : '';
-  const qty   = Math.max(1, Math.min(parseInt(qtyEl?.value) || 1, 9999));
+  const code    = codeEl.value.trim().toUpperCase();
+  const catId   = catEl ? catEl.value : '';
   const catCode = catCodes[catId] || '';
   const prefix  = catCode ? `${catCode}-${code}` : code;
+
+  <?php if ($isEdit): ?>
+  const qty = Math.max(1, Math.min(parseInt(document.getElementById('fieldQty')?.value) || 1, 9999));
+  <?php else: ?>
+  const qty = Math.max(1, getBatchTotal());
+  <?php endif; ?>
 
   if (!code) {
     box.innerHTML = '<span style="color:var(--text-disabled);">Isi Kode Produk dan pilih Kategori untuk melihat preview...</span>';
@@ -457,10 +639,110 @@ function updateCodePreview() {
     html += `<span style="color:var(--text-disabled);">  &bull;&bull;&bull; (${qty - 5} lagi)</span><br>`;
     html += `<span style="color:var(--accent-light);">${prefix}-${u(qty)}</span>`;
   }
-
   box.innerHTML = html;
   if (cnt) cnt.textContent = qty + ' unit';
 }
+
+<?php if ($isEdit): ?>
+document.getElementById('fieldQty')?.addEventListener('input', updateCodePreview);
+<?php endif; ?>
+
+// ── Batch table (hanya mode tambah baru) ─────────────────────
+<?php if (!$isEdit): ?>
+const locationOptions = <?= json_encode(array_map(fn($l) => ['id' => $l['id'], 'name' => $l['name']], $locations)) ?>;
+
+let batchRowId = 0;
+
+function addBatchRow(qty = 1, price = '', condition = 'good', locationId = '') {
+  const id   = ++batchRowId;
+  const locOpts = locationOptions.map(l =>
+    `<option value="${l.id}" ${l.id == locationId ? 'selected' : ''}>${l.name}</option>`
+  ).join('');
+
+  const tr = document.createElement('tr');
+  tr.id = 'brow-' + id;
+  tr.style.cssText = 'border-bottom:1px solid var(--border);';
+  tr.innerHTML = `
+    <td style="padding:6px 4px;">
+      <input type="number" class="form-control form-control-sm batch-qty" min="1" max="999"
+             value="${qty}" style="width:80px;" oninput="onBatchChange()">
+    </td>
+    <td style="padding:6px 4px;">
+      <input type="number" class="form-control form-control-sm batch-price" min="0" step="1"
+             value="${price}" placeholder="—" style="width:130px;">
+    </td>
+    <td style="padding:6px 4px;">
+      <select class="form-control form-control-sm batch-cond" style="width:120px;">
+        <option value="good"  ${condition==='good' ?'selected':''}>Baik</option>
+        <option value="fair"  ${condition==='fair' ?'selected':''}>Cukup Baik</option>
+        <option value="poor"  ${condition==='poor' ?'selected':''}>Kurang Baik</option>
+      </select>
+    </td>
+    <td style="padding:6px 4px;">
+      <select class="form-control form-control-sm batch-loc" style="width:140px;">
+        <option value="">— Ikut barang —</option>
+        ${locOpts}
+      </select>
+    </td>
+    <td style="padding:6px 4px;text-align:center;">
+      <button type="button" class="btn btn-ghost btn-icon btn-sm" onclick="removeBatchRow(${id})"
+              title="Hapus batch" style="color:var(--danger);">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </td>`;
+  document.getElementById('batchBody').appendChild(tr);
+  onBatchChange();
+}
+
+function removeBatchRow(id) {
+  document.getElementById('brow-' + id)?.remove();
+  onBatchChange();
+}
+
+function getBatchTotal() {
+  let total = 0;
+  document.querySelectorAll('.batch-qty').forEach(el => {
+    total += Math.max(1, parseInt(el.value) || 0);
+  });
+  return total;
+}
+
+function onBatchChange() {
+  const total = getBatchTotal();
+  const txt   = document.getElementById('batchTotalText');
+  const badge = document.getElementById('batchTotalBadge');
+  const hid   = document.getElementById('fieldQty');
+  if (txt)   txt.textContent   = total + ' unit';
+  if (badge) badge.textContent = total + ' unit';
+  if (hid)   hid.value         = total;
+  updateCodePreview();
+}
+
+// Serialisasi batch ke JSON sebelum submit
+document.querySelector('form').addEventListener('submit', function(e) {
+  const rows = document.querySelectorAll('#batchBody tr');
+  if (rows.length === 0) {
+    e.preventDefault();
+    alert('Tambahkan minimal 1 batch unit sebelum menyimpan barang.');
+    return;
+  }
+  const batches = [];
+  rows.forEach(tr => {
+    batches.push({
+      qty:         parseInt(tr.querySelector('.batch-qty')?.value)  || 1,
+      price:       tr.querySelector('.batch-price')?.value.trim()   || '',
+      condition:   tr.querySelector('.batch-cond')?.value           || 'good',
+      location_id: tr.querySelector('.batch-loc')?.value            || '',
+    });
+  });
+  document.getElementById('unitBatchesJson').value = JSON.stringify(batches);
+});
+
+// Inisialisasi dengan 1 baris
+addBatchRow();
+<?php endif; ?>
 
 // Run on load
 updateCodePreview();

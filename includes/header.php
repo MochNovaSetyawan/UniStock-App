@@ -25,6 +25,11 @@ $currentDir  = basename(dirname($_SERVER['PHP_SELF']));
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="<?= APP_URL ?>/assets/css/style.css">
+  <?php if ($appLogo && file_exists(UPLOAD_PATH . $appLogo)): ?>
+  <link rel="icon" type="image/jpeg" href="<?= UPLOAD_URL . htmlspecialchars($appLogo) ?>">
+  <?php else: ?>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236366f1' stroke-width='2'><path d='M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10'/></svg>">
+  <?php endif; ?>
 </head>
 <body>
 <div class="app-layout">

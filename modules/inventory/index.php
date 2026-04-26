@@ -74,10 +74,10 @@ include __DIR__ . '/../../includes/header.php';
   </div>
   <?php if (isAdmin()): ?>
   <div class="btn-group">
-    <a href="form.php" class="btn btn-primary">
+    <button type="button" class="btn btn-primary" onclick="openModal('choiceModal')">
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>
       Tambah Barang
-    </a>
+    </button>
     <a href="<?= APP_URL ?>/modules/reports/index.php?type=inventory" class="btn btn-outline">
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
       Export
@@ -243,5 +243,42 @@ include __DIR__ . '/../../includes/header.php';
   <!-- Pagination -->
   <?php echo paginate($total, $perPage, $page, '?' . http_build_query(array_filter(['search'=>$search,'category'=>$catId,'location'=>$locId,'condition'=>$cond,'status'=>$status]))); ?>
 </div>
+
+<?php if (isAdmin()): ?>
+<!-- Modal Pilihan Tambah -->
+<div class="modal-overlay" id="choiceModal" onclick="if(event.target===this)closeModal('choiceModal')">
+  <div class="modal" style="max-width:480px;width:100%;">
+    <div class="modal-header">
+      <div class="modal-title">Tambah ke Inventaris</div>
+      <button class="modal-close" onclick="closeModal('choiceModal')">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;padding:24px;">
+      <a href="form.php" style="display:flex;align-items:center;gap:16px;padding:18px 20px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius);text-decoration:none;transition:border-color 0.2s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+        <div style="width:44px;height:44px;background:rgba(99,102,241,0.15);border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--accent-light)"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10"/></svg>
+        </div>
+        <div>
+          <div style="font-weight:600;color:var(--text-primary);margin-bottom:3px;">Tambah Barang Baru</div>
+          <div style="font-size:0.8rem;color:var(--text-muted);">Daftarkan barang atau aset baru ke inventaris</div>
+        </div>
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--text-muted)" style="margin-left:auto;flex-shrink:0;"><path d="M9 18l6-6-6-6"/></svg>
+      </a>
+
+      <a href="restock.php" style="display:flex;align-items:center;gap:16px;padding:18px 20px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius);text-decoration:none;transition:border-color 0.2s;" onmouseover="this.style.borderColor='var(--success)'" onmouseout="this.style.borderColor='var(--border)'">
+        <div style="width:44px;height:44px;background:rgba(34,197,94,0.12);border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--success)"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+        </div>
+        <div>
+          <div style="font-weight:600;color:var(--text-primary);margin-bottom:3px;">Tambah Unit</div>
+          <div style="font-size:0.8rem;color:var(--text-muted);">Tambah unit baru ke barang yang sudah terdaftar</div>
+        </div>
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="var(--text-muted)" style="margin-left:auto;flex-shrink:0;"><path d="M9 18l6-6-6-6"/></svg>
+      </a>
+    </div>
+  </div>
+</div>
+<?php endif; ?>
 
 <?php include __DIR__ . '/../../includes/footer.php'; ?>

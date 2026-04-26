@@ -340,12 +340,12 @@ body.sidebar-unpinned.sidebar-hovering .sidebar-spacer {
 /* Selama sidebar pin/unpin transition: cegah grid/flex reflow tampak jitter.
    JS akan tambah class ini ke body, lalu cabut setelah transisi selesai. */
 body.sidebar-transitioning .stats-grid,
-body.sidebar-transitioning .dashboard-grid,
 body.sidebar-transitioning .grid-2,
 body.sidebar-transitioning .grid-3 {
   /* grid-template-columns dikunci via inline style oleh JS, transisi dimatikan */
   transition: none !important;
 }
+/* dashboard-grid TIDAK dikunci — kolom 1fr tumbuh alami mengikuti container */
 body.sidebar-transitioning .stat-card,
 body.sidebar-transitioning .table-container {
   transition: none !important;
@@ -1330,9 +1330,9 @@ select.form-control option {
    ============================================ */
 .dashboard-grid {
   display: grid;
-  /* Kolom kiri: max 640px tapi tidak lebih dari (100% - 280px) agar kolom kanan
-     selalu punya ruang minimal 280px. Kolom kanan: ambil sisa space. */
-  grid-template-columns: min(640px, calc(100% - 280px)) 1fr;
+  /* Kolom kiri (Transaksi Terkini) mengisi semua sisa ruang — melebar saat sidebar tutup.
+     Kolom kanan (Barang per Kategori) lebar tetap 320px. */
+  grid-template-columns: 1fr 320px;
   gap: 20px;
 }
 

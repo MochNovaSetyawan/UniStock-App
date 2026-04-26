@@ -137,8 +137,9 @@ function toggleSidebarPin() {
 
   // 1. Kunci semua grid containers di computed column count sebelum layout berubah
   var grids = document.querySelectorAll(
-    '.stats-grid, .dashboard-grid, .grid-2, .grid-3, .form-grid, .form-grid-2, .form-grid-3'
+    '.stats-grid, .grid-2, .grid-3, .form-grid, .form-grid-2, .form-grid-3'
   );
+  /* .dashboard-grid tidak dikunci — layout 1fr 320px mengikuti container secara alami */
   grids.forEach(function(g) {
     var cols = getComputedStyle(g).gridTemplateColumns;
     if (cols && cols !== 'none') g.style.gridTemplateColumns = cols;

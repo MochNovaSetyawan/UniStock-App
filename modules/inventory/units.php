@@ -78,12 +78,10 @@ include __DIR__ . '/../../includes/header.php';
     <p class="mono" style="color:var(--accent-light);"><?= sanitize($prefix) ?>-U001 &mdash; <?= sanitize($prefix) ?>-U<?= str_pad($totalUnits, 3, '0', STR_PAD_LEFT) ?></p>
   </div>
   <?php if (isAdmin()): ?>
-  <div class="btn-group">
-    <a href="form.php?id=<?= $item['id'] ?>" class="btn btn-outline">
-      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-      Edit Barang
-    </a>
-  </div>
+  <a href="form.php?id=<?= $item['id'] ?>" class="btn btn-outline">
+    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+    Edit Barang
+  </a>
   <?php endif; ?>
 </div>
 
@@ -163,6 +161,7 @@ include __DIR__ . '/../../includes/header.php';
           <th>Kode Unit</th>
           <th>Status</th>
           <th>Kondisi</th>
+          <th>Harga Beli</th>
           <th>Serial Number</th>
           <th>Lokasi</th>
           <th>Catatan</th>
@@ -180,6 +179,13 @@ include __DIR__ . '/../../includes/header.php';
           </td>
           <td><?= unitStatusBadge($u['status']) ?></td>
           <td><?= conditionBadge($u['condition']) ?></td>
+          <td style="color:var(--text-secondary);white-space:nowrap;">
+            <?php if ($u['purchase_price'] !== null): ?>
+              <span style="color:var(--text-primary);font-weight:600;">Rp <?= number_format($u['purchase_price'], 0, ',', '.') ?></span>
+            <?php else: ?>
+              <span style="color:var(--text-muted);font-size:0.78rem;">— (ikut barang)</span>
+            <?php endif; ?>
+          </td>
           <td style="color:var(--text-secondary);"><?= sanitize($u['serial_number'] ?: '—') ?></td>
           <td style="color:var(--text-secondary);"><?= sanitize($u['loc_name'] ?: ($item['loc_name'] ?? '—')) ?></td>
           <td style="color:var(--text-muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="<?= sanitize($u['notes']) ?>"><?= sanitize($u['notes'] ?: '—') ?></td>
@@ -261,6 +267,13 @@ include __DIR__ . '/../../includes/header.php';
         </div>
 
         <div class="form-group">
+          <label class="form-label">Harga Beli Unit</label>
+          <input type="number" name="purchase_price" id="editUnitPrice" class="form-control"
+                 min="0" step="1" placeholder="Kosongkan jika sama dengan harga barang">
+          <span class="form-hint">Harga barang: Rp <?= number_format($item['purchase_price'] ?? 0, 0, ',', '.') ?></span>
+        </div>
+
+        <div class="form-group">
           <label class="form-label">Serial Number</label>
           <input type="text" name="serial_number" id="editUnitSerial" class="form-control" placeholder="SN-XXXXXXXX">
         </div>
@@ -296,17 +309,19 @@ include __DIR__ . '/../../includes/header.php';
   <input type="hidden" name="_redirect" value="units.php?item_id=<?= $item['id'] ?>">
   <input type="hidden" name="action" value="bulk_status">
 </form>
+
 <?php endif; ?>
 
 <script>
 function openEditModal(unit) {
-  document.getElementById('editUnitId').value       = unit.id;
+  document.getElementById('editUnitId').value             = unit.id;
   document.getElementById('editUnitFullCode').textContent = unit.full_code;
-  document.getElementById('editUnitStatus').value   = unit.status;
-  document.getElementById('editUnitCondition').value = unit.condition;
-  document.getElementById('editUnitSerial').value   = unit.serial_number || '';
-  document.getElementById('editUnitLocation').value = unit.location_id || '';
-  document.getElementById('editUnitNotes').value    = unit.notes || '';
+  document.getElementById('editUnitStatus').value         = unit.status;
+  document.getElementById('editUnitCondition').value      = unit.condition;
+  document.getElementById('editUnitPrice').value          = unit.purchase_price || '';
+  document.getElementById('editUnitSerial').value         = unit.serial_number || '';
+  document.getElementById('editUnitLocation').value       = unit.location_id || '';
+  document.getElementById('editUnitNotes').value          = unit.notes || '';
   openModal('editUnitModal');
 }
 

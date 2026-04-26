@@ -22,7 +22,29 @@ if ($active->fetchColumn() > 0) {
     header('Location: index.php'); exit;
 }
 
-$db->prepare("DELETE FROM items WHERE id = ?")->execute([$id]);
+// Hapus berurutan mengikuti FK chain
+$db->beginTransaction();
+try {
+    // 1. Hapus transaction_units yang merujuk unit barang ini
+    $db->prepare("
+        DELETE tu FROM transaction_units tu
+        INNER JOIN item_units iu ON tu.unit_id = iu.id
+        WHERE iu.item_id = ?
+    ")->execute([$id]);
+
+    // 2. Hapus semua unit barang
+    $db->prepare("DELETE FROM item_units WHERE item_id = ?")->execute([$id]);
+
+    // 3. Hapus barang
+    $db->prepare("DELETE FROM items WHERE id = ?")->execute([$id]);
+
+    $db->commit();
+} catch (\Exception $e) {
+    $db->rollBack();
+    flashMessage('error', 'Gagal menghapus barang: ' . $e->getMessage());
+    header('Location: index.php'); exit;
+}
+
 auditLog('DELETE', 'inventory', $id, 'Item deleted: ' . $item['name'], $item);
 flashMessage('success', 'Barang "' . $item['name'] . '" berhasil dihapus.');
 header('Location: index.php');
