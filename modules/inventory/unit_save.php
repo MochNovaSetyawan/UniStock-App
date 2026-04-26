@@ -90,18 +90,21 @@ $allowedCond = ['good','fair','poor','damaged'];
 
 $status     = in_array($_POST['status'] ?? '', $allowed) ? $_POST['status'] : 'available';
 $condition  = in_array($_POST['condition'] ?? '', $allowedCond) ? $_POST['condition'] : 'good';
-$serial     = trim($_POST['serial_number'] ?? '');
 $locationId = (int)($_POST['location_id'] ?? 0) ?: null;
 $notes      = trim($_POST['notes'] ?? '');
 $disposed   = ($status === 'disposed') ? date('Y-m-d') : null;
-$price      = $_POST['purchase_price'] !== '' ? abs((float)$_POST['purchase_price']) : null;
+$price      = isset($_POST['purchase_price']) && $_POST['purchase_price'] !== '' ? abs((float)$_POST['purchase_price']) : null;
+$supplier   = trim($_POST['supplier'] ?? '') ?: null;
+$acquiredDate = $_POST['acquired_date'] ?? '' ?: null;
 
 $stmt = $db->prepare("UPDATE item_units
-    SET status = ?, `condition` = ?, serial_number = ?, location_id = ?,
-        notes = ?, disposed_date = ?, purchase_price = ?, updated_at = NOW()
+    SET status = ?, `condition` = ?, location_id = ?,
+        notes = ?, disposed_date = ?, purchase_price = ?, supplier = ?, acquired_date = ?,
+        updated_at = NOW()
     WHERE id = ? AND item_id = ?");
-$stmt->execute([$status, $condition, $serial ?: null, $locationId,
-                $notes ?: null, $disposed, $price, $unitId, $itemId]);
+$stmt->execute([$status, $condition, $locationId,
+                $notes ?: null, $disposed, $price, $supplier, $acquiredDate,
+                $unitId, $itemId]);
 
 // Sync quantity_available on the parent item
 syncItemAvailability($db, $itemId);

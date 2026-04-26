@@ -29,6 +29,23 @@ foreach ($usRows->fetchAll() as $r) { $unitStats[$r['status']] = (int)$r['cnt'];
 $totalUnits  = array_sum($unitStats);
 $catCode     = $item['category_code'] ?? '';
 
+// Procurement batches (grouped by acquired_date + supplier + purchase_price)
+$procStmt = $db->prepare("
+    SELECT
+        acquired_date,
+        supplier,
+        purchase_price,
+        COUNT(*) as unit_count,
+        MIN(unit_number) as unit_from,
+        MAX(unit_number) as unit_to
+    FROM item_units
+    WHERE item_id = ?
+    GROUP BY acquired_date, supplier, purchase_price
+    ORDER BY acquired_date IS NULL, acquired_date DESC, unit_from
+");
+$procStmt->execute([$id]);
+$procBatches = $procStmt->fetchAll();
+
 // Transaction history
 $txHistory = $db->prepare("
     SELECT t.*, u.full_name as user_name
@@ -65,14 +82,6 @@ include __DIR__ . '/../../includes/header.php';
   </div>
   <div class="btn-group">
     <?php if (isAdmin()): ?>
-    <a href="form.php?id=<?= $item['id'] ?>" class="btn btn-outline">
-      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-      Edit
-    </a>
-    <a href="units.php?item_id=<?= $item['id'] ?>" class="btn btn-outline">
-      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
-      Kode Unit <?php if ($totalUnits): ?><span class="badge badge-secondary" style="margin-left:4px;"><?= $totalUnits ?></span><?php endif; ?>
-    </a>
     <?php endif; ?>
     <a href="<?= APP_URL ?>/modules/transactions/form.php?item_id=<?= $item['id'] ?>" class="btn btn-primary">
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
@@ -116,7 +125,6 @@ include __DIR__ . '/../../includes/header.php';
                 ['Kode', $item['code']],
                 ['Merek', $item['brand'] ?: '-'],
                 ['Model', $item['model'] ?: '-'],
-                ['Nomor Seri', $item['serial_number'] ?: '-'],
                 ['Kategori', $item['category_name'] ?: '-'],
                 ['Lokasi', ($item['location_name'] ?? '-') . ($item['building'] ? " ({$item['building']})" : '')],
                 ['Satuan', $item['unit']],
@@ -218,31 +226,57 @@ include __DIR__ . '/../../includes/header.php';
     </div>
     <?php endif; ?>
 
-    <!-- Purchase Info -->
+    <!-- Procurement Batches -->
+    <?php if (!empty($procBatches)): ?>
     <div class="card">
-      <div class="card-header"><div class="card-title">Info Pengadaan</div></div>
-      <div class="card-body">
-        <div class="detail-grid">
-          <div class="detail-field"><label>Tanggal Beli</label><span><?= formatDate($item['purchase_date']) ?></span></div>
-          <div class="detail-field"><label>Harga Beli</label><span><?= formatRupiah($item['purchase_price']) ?></span></div>
-          <div class="detail-field"><label>Supplier</label><span><?= sanitize($item['supplier'] ?: '-') ?></span></div>
-          <div class="detail-field"><label>Garansi Hingga</label>
-            <span <?= $item['warranty_expiry'] && $item['warranty_expiry'] < date('Y-m-d') ? "style='color:var(--danger)'" : '' ?>>
-              <?= formatDate($item['warranty_expiry']) ?>
-              <?php if ($item['warranty_expiry'] && $item['warranty_expiry'] < date('Y-m-d')): ?><span class="badge badge-danger" style="margin-left:6px;">Expired</span><?php endif; ?>
-            </span>
-          </div>
-          <div class="detail-field"><label>Ditambah oleh</label><span><?= sanitize($item['created_by_name'] ?? '-') ?></span></div>
-          <div class="detail-field"><label>Terakhir diupdate</label><span><?= formatDateTime($item['updated_at']) ?></span></div>
-        </div>
-        <?php if ($item['notes']): ?>
-        <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border);">
-          <label class="form-label" style="display: block; margin-bottom: 6px;">Catatan</label>
-          <p style="font-size: 0.85rem; color: var(--text-secondary);"><?= nl2br(sanitize($item['notes'])) ?></p>
-        </div>
-        <?php endif; ?>
+      <div class="card-header">
+        <div class="card-title">Riwayat Pengadaan</div>
+        <a href="units.php?item_id=<?= $item['id'] ?>" class="btn btn-ghost btn-sm">Kelola Unit</a>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="table" style="margin:0;">
+          <thead>
+            <tr>
+              <th>Tanggal</th>
+              <th>Supplier</th>
+              <th>Harga / Unit</th>
+              <th style="text-align:center;">Jml Unit</th>
+              <th>Nomor Unit</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php
+            $pfxProc = ($item['category_code'] ?? '') ? $item['category_code'].'-'.$item['code'] : $item['code'];
+            foreach ($procBatches as $b):
+              $fromCode = $pfxProc . '-U' . str_pad($b['unit_from'], 3, '0', STR_PAD_LEFT);
+              $toCode   = $pfxProc . '-U' . str_pad($b['unit_to'],   3, '0', STR_PAD_LEFT);
+            ?>
+            <tr>
+              <td style="white-space:nowrap;"><?= $b['acquired_date'] ? formatDate($b['acquired_date']) : '<span style="color:var(--text-muted)">—</span>' ?></td>
+              <td><?= $b['supplier'] ? sanitize($b['supplier']) : '<span style="color:var(--text-muted)">—</span>' ?></td>
+              <td style="white-space:nowrap;">
+                <?php if ($b['purchase_price'] !== null): ?>
+                  <span style="font-weight:600;">Rp <?= number_format($b['purchase_price'], 0, ',', '.') ?></span>
+                <?php else: ?>
+                  <span style="color:var(--text-muted)">—</span>
+                <?php endif; ?>
+              </td>
+              <td style="text-align:center;font-weight:700;"><?= $b['unit_count'] ?></td>
+              <td style="font-family:var(--font-mono,monospace);font-size:0.78rem;color:var(--accent-light);">
+                <?php if ($b['unit_from'] === $b['unit_to']): ?>
+                  <?= sanitize($fromCode) ?>
+                <?php else: ?>
+                  <?= sanitize($fromCode) ?> &mdash; <?= sanitize($toCode) ?>
+                <?php endif; ?>
+              </td>
+            </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
       </div>
     </div>
+    <?php endif; ?>
+
   </div>
 
   <div style="display: flex; flex-direction: column; gap: 20px;">

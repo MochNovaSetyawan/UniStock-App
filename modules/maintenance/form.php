@@ -60,7 +60,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         auditLog('CREATE', 'maintenance', $newId, 'Maintenance created: ' . $data['title']);
         flashMessage('success', 'Laporan pemeliharaan berhasil dikirim.');
-        header('Location: index.php'); exit;
+        $redirect = trim($_POST['_redirect'] ?? '');
+        header('Location: ' . ($redirect ?: 'index.php')); exit;
     }
 }
 

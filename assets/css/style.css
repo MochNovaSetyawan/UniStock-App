@@ -334,7 +334,6 @@ body.sidebar-unpinned.sidebar-hovering .sidebar-spacer {
   flex-direction: column;
   min-height: 100vh;
   transition: filter 0.28s cubic-bezier(0.4, 0, 0.2, 1);
-  will-change: transform;
 }
 
 /* Selama sidebar pin/unpin transition: cegah grid/flex reflow tampak jitter.
@@ -1200,7 +1199,7 @@ select.form-control option {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: 24px 20px;
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--transition);
@@ -1217,8 +1216,10 @@ select.form-control option {
   border-radius: var(--radius-lg);
   width: 100%;
   max-width: 560px;
-  max-height: 90vh;
-  overflow-y: auto;
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   transform: scale(0.95) translateY(10px);
   transition: transform var(--transition);
 }
@@ -1271,6 +1272,8 @@ select.form-control option {
 
 .modal-body {
   padding: 24px;
+  overflow-y: auto;
+  flex: 1;
 }
 
 .modal-footer {

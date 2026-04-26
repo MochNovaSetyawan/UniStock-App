@@ -55,23 +55,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         generateMissingUnits($db, $itemId, $item['code'], $item['category_id'], $newTotal, $condition, $locationId);
 
-        // Set acquired_date & purchase_price pada unit yang baru dibuat
+        // Set acquired_date, purchase_price, supplier pada unit yang baru dibuat
         $db->prepare("
             UPDATE item_units
-            SET acquired_date = ?, purchase_price = ?
+            SET acquired_date = ?, purchase_price = ?, supplier = ?
             WHERE item_id = ? AND unit_number > ? AND unit_number <= ?
-        ")->execute([$acquiredDate, $price, $itemId, $currentMax, $newTotal]);
+        ")->execute([$acquiredDate, $price, $supplier ?: null, $itemId, $currentMax, $newTotal]);
 
         // Update items.quantity
         $db->prepare("UPDATE items SET quantity = ?, updated_at = NOW() WHERE id = ?")->execute([$newTotal, $itemId]);
 
-        // Update supplier / warranty jika diisi
-        if ($supplier || $warrantyExpiry) {
-            $db->prepare("UPDATE items SET
-                supplier        = COALESCE(NULLIF(?, ''), supplier),
-                warranty_expiry = COALESCE(?, warranty_expiry),
-                updated_at      = NOW()
-            WHERE id = ?")->execute([$supplier, $warrantyExpiry, $itemId]);
+        // Update warranty jika diisi
+        if ($warrantyExpiry) {
+            $db->prepare("UPDATE items SET warranty_expiry = COALESCE(?, warranty_expiry), updated_at = NOW() WHERE id = ?")
+               ->execute([$warrantyExpiry, $itemId]);
         }
 
         syncItemAvailability($db, $itemId);
@@ -108,72 +105,84 @@ include __DIR__ . '/../../includes/header.php';
 </div>
 
 <form method="POST">
-  <div class="grid-2" style="gap:20px;align-items:start;">
+  <div class="grid-2" style="gap:24px;align-items:start;">
 
-    <!-- Kolom kiri -->
+    <!-- ── Kolom kiri: Pilih Barang ── -->
     <div style="display:flex;flex-direction:column;gap:20px;">
-
-      <!-- Pilih Barang -->
       <div class="card">
         <div class="card-header"><div class="card-title">Pilih Barang</div></div>
-        <div class="card-body">
-          <div class="form-group">
+        <div class="card-body" style="display:flex;flex-direction:column;gap:16px;">
+          <div class="form-group" style="margin:0;">
             <label class="form-label">Barang <span class="required">*</span></label>
             <select name="item_id" id="itemSelect" class="form-control" required onchange="onItemChange(this.value)">
-              <option value="">— Pilih barang —</option>
+              <option value="">— Cari atau pilih barang —</option>
               <?php foreach ($allItems as $it): ?>
-              <option value="<?= $it['id'] ?>">
-                <?= sanitize($it['name']) ?> (<?= sanitize($it['code']) ?>)
-              </option>
+              <option value="<?= $it['id'] ?>"><?= sanitize($it['name']) ?> — <?= sanitize($it['code']) ?></option>
               <?php endforeach; ?>
             </select>
           </div>
 
-          <!-- Info card barang terpilih -->
-          <div id="itemInfoCard" style="display:none;margin-top:14px;background:var(--bg-elevated);border-radius:var(--radius-sm);padding:14px 16px;">
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
-              <div style="flex:1;">
-                <div id="infoName" style="font-weight:700;color:var(--text-primary);font-size:1rem;"></div>
-                <div id="infoCode" style="font-family:monospace;font-size:0.8rem;color:var(--accent-light);margin-top:2px;"></div>
+          <!-- Info barang terpilih -->
+          <div id="itemInfoCard" style="display:none;">
+            <div style="background:var(--bg-elevated);border-radius:var(--radius-sm);padding:14px 16px;">
+              <div style="margin-bottom:12px;">
+                <div id="infoName" style="font-weight:700;color:var(--text-primary);font-size:0.95rem;"></div>
+                <div id="infoCode" style="font-family:monospace;font-size:0.78rem;color:var(--accent-light);margin-top:2px;"></div>
               </div>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center;">
-              <div style="background:var(--bg-card);border-radius:var(--radius-sm);padding:8px;">
-                <div id="infoTotal" style="font-size:1.1rem;font-weight:700;color:var(--text-primary);"></div>
-                <div style="font-size:0.7rem;color:var(--text-muted);">Total Unit</div>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center;margin-bottom:12px;">
+                <div style="background:var(--bg-card);border-radius:var(--radius-sm);padding:10px 6px;">
+                  <div id="infoTotal" style="font-size:1.2rem;font-weight:800;color:var(--text-primary);"></div>
+                  <div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;">Total</div>
+                </div>
+                <div style="background:var(--bg-card);border-radius:var(--radius-sm);padding:10px 6px;">
+                  <div id="infoAvail" style="font-size:1.2rem;font-weight:800;color:var(--success);"></div>
+                  <div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;">Tersedia</div>
+                </div>
+                <div style="background:var(--bg-card);border-radius:var(--radius-sm);padding:10px 6px;border:1px solid var(--accent-dim,rgba(99,102,241,0.25));">
+                  <div id="infoAfter" style="font-size:1.2rem;font-weight:800;color:var(--accent-light);"></div>
+                  <div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;">Setelah</div>
+                </div>
               </div>
-              <div style="background:var(--bg-card);border-radius:var(--radius-sm);padding:8px;">
-                <div id="infoAvail" style="font-size:1.1rem;font-weight:700;color:var(--success);"></div>
-                <div style="font-size:0.7rem;color:var(--text-muted);">Tersedia</div>
+              <div style="display:flex;gap:16px;font-size:0.78rem;color:var(--text-muted);">
+                <span>Kategori: <strong id="infoCat" style="color:var(--text-secondary);"></strong></span>
+                <span>Lokasi: <strong id="infoLoc" style="color:var(--text-secondary);"></strong></span>
               </div>
-              <div style="background:var(--bg-card);border-radius:var(--radius-sm);padding:8px;">
-                <div id="infoAfter" style="font-size:1.1rem;font-weight:700;color:var(--accent-light);"></div>
-                <div style="font-size:0.7rem;color:var(--text-muted);">Setelah Tambah</div>
-              </div>
-            </div>
-            <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;gap:16px;font-size:0.78rem;color:var(--text-muted);">
-              <span>Kategori: <strong id="infoCat" style="color:var(--text-secondary);"></strong></span>
-              <span>Lokasi: <strong id="infoLoc" style="color:var(--text-secondary);"></strong></span>
             </div>
           </div>
         </div>
       </div>
+    </div>
 
-      <!-- Klasifikasi & Lokasi -->
-      <div class="card">
-        <div class="card-header"><div class="card-title">Klasifikasi &amp; Lokasi</div></div>
-        <div class="card-body">
+    <!-- ── Kolom kanan: Detail Penambahan ── -->
+    <div style="display:flex;flex-direction:column;gap:20px;">
+      <div class="card" style="border:1px solid var(--accent-dim,rgba(99,102,241,0.3));">
+        <div class="card-header" style="border-bottom:1px solid var(--accent-dim,rgba(99,102,241,0.2));">
+          <div class="card-title" style="color:var(--accent-light);">Detail Penambahan</div>
+        </div>
+        <div class="card-body" style="display:flex;flex-direction:column;gap:16px;">
+
+          <!-- Jumlah -->
+          <div class="form-group" style="margin:0;">
+            <label class="form-label">Jumlah Unit Ditambahkan <span class="required">*</span></label>
+            <input type="number" name="add_qty" id="addQtyInput" class="form-control"
+                   min="1" max="9999" value="1" required oninput="updateAfter()">
+            <span class="form-hint" id="startHint">Pilih barang terlebih dahulu</span>
+          </div>
+
+          <div style="height:1px;background:var(--border);"></div>
+
+          <!-- Kondisi & Lokasi -->
           <div class="form-grid">
-            <div class="form-group">
-              <label class="form-label">Kondisi Unit Baru</label>
+            <div class="form-group" style="margin:0;">
+              <label class="form-label">Kondisi</label>
               <select name="condition" class="form-control">
                 <option value="good">Baik</option>
                 <option value="fair">Cukup Baik</option>
                 <option value="poor">Kurang Baik</option>
               </select>
             </div>
-            <div class="form-group">
-              <label class="form-label">Lokasi Unit Baru</label>
+            <div class="form-group" style="margin:0;">
+              <label class="form-label">Lokasi</label>
               <select name="location_id" id="locationSelect" class="form-control">
                 <option value="">— Ikut barang —</option>
                 <?php foreach ($locations as $loc): ?>
@@ -182,64 +191,37 @@ include __DIR__ . '/../../includes/header.php';
               </select>
             </div>
           </div>
-        </div>
-      </div>
 
-    </div>
+          <div style="height:1px;background:var(--border);"></div>
 
-    <!-- Kolom kanan -->
-    <div style="display:flex;flex-direction:column;gap:20px;">
-
-      <!-- Unit -->
-      <div class="card" style="border:1px solid var(--accent-dim,rgba(99,102,241,0.3));">
-        <div class="card-header" style="border-bottom:1px solid var(--accent-dim,rgba(99,102,241,0.2));">
-          <div class="card-title" style="color:var(--accent-light);">Unit</div>
-        </div>
-        <div class="card-body">
-          <div class="form-group">
-            <label class="form-label">Jumlah Unit Ditambahkan <span class="required">*</span></label>
-            <input type="number" name="add_qty" id="addQtyInput" class="form-control"
-                   min="1" max="9999" value="1" required oninput="updateAfter()">
-            <span class="form-hint" id="startHint">Pilih barang terlebih dahulu</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Info Pengadaan -->
-      <div class="card">
-        <div class="card-header"><div class="card-title">Info Pengadaan</div></div>
-        <div class="card-body">
-          <div style="display:flex;flex-direction:column;gap:14px;">
-            <div class="form-group">
+          <!-- Info Pengadaan -->
+          <div class="form-grid">
+            <div class="form-group" style="margin:0;">
               <label class="form-label">Tanggal Pembelian</label>
               <input type="date" name="acquired_date" class="form-control">
             </div>
-            <div class="form-group">
-              <label class="form-label">Harga Beli per Unit (Rp)</label>
-              <input type="number" name="purchase_price" class="form-control" min="0" step="1"
-                     placeholder="Kosongkan jika sama dengan harga barang">
+            <div class="form-group" style="margin:0;">
+              <label class="form-label">Harga Beli / Unit (Rp)</label>
+              <input type="number" name="purchase_price" class="form-control" min="0" step="1" placeholder="Opsional">
               <span class="form-hint" id="priceHint"></span>
             </div>
-            <div class="form-group">
+            <div class="form-group full" style="margin:0;">
               <label class="form-label">Supplier / Vendor</label>
-              <input type="text" name="supplier" id="supplierInput" class="form-control"
-                     placeholder="Nama supplier...">
-              <span class="form-hint">Kosongkan jika tidak berubah</span>
+              <input type="text" name="supplier" id="supplierInput" class="form-control" placeholder="Nama supplier...">
             </div>
-            <div class="form-group">
+            <div class="form-group full" style="margin:0;">
               <label class="form-label">Garansi Hingga</label>
               <input type="date" name="warranty_expiry" class="form-control">
-              <span class="form-hint">Kosongkan jika tidak berubah</span>
             </div>
           </div>
+
         </div>
       </div>
-
     </div>
   </div>
 
   <!-- Actions -->
-  <div style="display:flex;gap:12px;margin-top:20px;justify-content:flex-end;">
+  <div style="display:flex;gap:12px;margin-top:24px;justify-content:flex-end;">
     <a href="index.php" class="btn btn-outline">Batal</a>
     <button type="submit" class="btn btn-primary" id="submitBtn" disabled>
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>

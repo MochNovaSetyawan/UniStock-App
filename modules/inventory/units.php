@@ -32,7 +32,7 @@ $where  = ['iu.item_id = ?'];
 $params = [$itemId];
 if ($filterStatus) { $where[] = 'iu.status = ?'; $params[] = $filterStatus; }
 if ($filterCond)   { $where[] = 'iu.condition = ?'; $params[] = $filterCond; }
-if ($search)       { $where[] = '(iu.full_code LIKE ? OR iu.serial_number LIKE ? OR iu.notes LIKE ?)';
+if ($search)       { $where[] = '(iu.full_code LIKE ? OR iu.supplier LIKE ? OR iu.notes LIKE ?)';
                      $params  = array_merge($params, ["%$search%", "%$search%", "%$search%"]); }
 
 $whereStr = implode(' AND ', $where);
@@ -157,12 +157,12 @@ include __DIR__ . '/../../includes/header.php';
     <table class="table">
       <thead>
         <tr>
-          <th style="width:32px;"><input type="checkbox" id="checkAll" onchange="toggleAll(this)"></th>
           <th>Kode Unit</th>
           <th>Status</th>
           <th>Kondisi</th>
+          <th>Tgl Beli</th>
+          <th>Supplier</th>
           <th>Harga Beli</th>
-          <th>Serial Number</th>
           <th>Lokasi</th>
           <th>Catatan</th>
           <?php if (isAdmin()): ?><th style="text-align:right;">Aksi</th><?php endif; ?>
@@ -171,7 +171,6 @@ include __DIR__ . '/../../includes/header.php';
       <tbody>
         <?php foreach ($units as $u): ?>
         <tr>
-          <td><input type="checkbox" class="row-check" value="<?= $u['id'] ?>"></td>
           <td>
             <span class="mono" style="font-size:0.85rem;font-weight:600;color:var(--accent-light);">
               <?= sanitize($u['full_code']) ?>
@@ -179,24 +178,26 @@ include __DIR__ . '/../../includes/header.php';
           </td>
           <td><?= unitStatusBadge($u['status']) ?></td>
           <td><?= conditionBadge($u['condition']) ?></td>
+          <td style="color:var(--text-muted);font-size:0.8rem;white-space:nowrap;"><?= $u['acquired_date'] ? formatDate($u['acquired_date']) : '—' ?></td>
+          <td style="color:var(--text-secondary);font-size:0.82rem;"><?= sanitize($u['supplier'] ?: '—') ?></td>
           <td style="color:var(--text-secondary);white-space:nowrap;">
             <?php if ($u['purchase_price'] !== null): ?>
               <span style="color:var(--text-primary);font-weight:600;">Rp <?= number_format($u['purchase_price'], 0, ',', '.') ?></span>
             <?php else: ?>
-              <span style="color:var(--text-muted);font-size:0.78rem;">— (ikut barang)</span>
+              <span style="color:var(--text-muted);font-size:0.78rem;">—</span>
             <?php endif; ?>
           </td>
-          <td style="color:var(--text-secondary);"><?= sanitize($u['serial_number'] ?: '—') ?></td>
           <td style="color:var(--text-secondary);"><?= sanitize($u['loc_name'] ?: ($item['loc_name'] ?? '—')) ?></td>
           <td style="color:var(--text-muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="<?= sanitize($u['notes']) ?>"><?= sanitize($u['notes'] ?: '—') ?></td>
           <?php if (isAdmin()): ?>
           <td style="text-align:right;">
             <div class="btn-group" style="justify-content:flex-end;">
               <?php if (in_array($u['status'], ['available','damaged'])): ?>
-              <a href="<?= APP_URL ?>/modules/maintenance/form.php?item_id=<?= $itemId ?>&unit_id=<?= $u['id'] ?>"
-                 class="btn btn-ghost btn-icon btn-sm" title="Lapor Pemeliharaan" style="color:var(--warning);">
+              <button type="button" class="btn btn-ghost btn-icon btn-sm" title="Lapor Pemeliharaan"
+                style="color:var(--warning);"
+                onclick="openMaintModal(<?= htmlspecialchars(json_encode(['id'=>$u['id'],'full_code'=>$u['full_code'],'item_id'=>$itemId])) ?>)">
                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-              </a>
+              </button>
               <?php endif; ?>
               <button type="button" class="btn btn-ghost btn-icon btn-sm" title="Edit Unit"
                 onclick="openEditModal(<?= htmlspecialchars(json_encode($u)) ?>)">
@@ -212,30 +213,19 @@ include __DIR__ . '/../../includes/header.php';
     <?php endif; ?>
   </div>
 
-  <?php if (isAdmin() && !empty($units)): ?>
-  <!-- Bulk action bar -->
-  <div id="bulkBar" style="display:none;padding:12px 20px;border-top:1px solid var(--border);background:var(--bg-elevated);align-items:center;gap:12px;flex-wrap:wrap;">
-    <span id="bulkCount" style="font-size:0.82rem;color:var(--text-secondary);"></span>
-    <span style="color:var(--border);">|</span>
-    <span style="font-size:0.82rem;color:var(--text-muted);">Ubah status:</span>
-    <?php foreach (['available'=>'Tersedia','borrowed'=>'Dipinjam','maintenance'=>'Maintenance','damaged'=>'Rusak','disposed'=>'Dibuang'] as $sv => $sl): ?>
-    <button type="button" class="btn btn-ghost btn-sm" onclick="bulkChangeStatus('<?= $sv ?>')"><?= $sl ?></button>
-    <?php endforeach; ?>
-  </div>
-  <?php endif; ?>
 </div>
 
 <?php if (isAdmin()): ?>
 <!-- Edit Unit Modal -->
 <div class="modal-overlay" id="editUnitModal">
-  <div class="modal" style="max-width:480px;width:100%;">
+  <div class="modal" style="max-width:480px;">
     <div class="modal-header">
       <div class="modal-title">Edit Unit</div>
       <button class="modal-close" onclick="closeModal('editUnitModal')">
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg>
       </button>
     </div>
-    <form method="POST" action="unit_save.php">
+    <form method="POST" action="unit_save.php" style="display:flex;flex-direction:column;flex:1;min-height:0;">
       <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;">
         <input type="hidden" name="unit_id" id="editUnitId">
         <input type="hidden" name="item_id" value="<?= $item['id'] ?>">
@@ -266,16 +256,21 @@ include __DIR__ . '/../../includes/header.php';
           </div>
         </div>
 
-        <div class="form-group">
-          <label class="form-label">Harga Beli Unit</label>
-          <input type="number" name="purchase_price" id="editUnitPrice" class="form-control"
-                 min="0" step="1" placeholder="Kosongkan jika sama dengan harga barang">
-          <span class="form-hint">Harga barang: Rp <?= number_format($item['purchase_price'] ?? 0, 0, ',', '.') ?></span>
+        <div class="form-grid" style="grid-template-columns:1fr 1fr;">
+          <div class="form-group">
+            <label class="form-label">Tanggal Beli</label>
+            <input type="date" name="acquired_date" id="editUnitAcquired" class="form-control">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Harga Beli / Unit (Rp)</label>
+            <input type="number" name="purchase_price" id="editUnitPrice" class="form-control"
+                   min="0" step="1" placeholder="0">
+          </div>
         </div>
 
         <div class="form-group">
-          <label class="form-label">Serial Number</label>
-          <input type="text" name="serial_number" id="editUnitSerial" class="form-control" placeholder="SN-XXXXXXXX">
+          <label class="form-label">Supplier</label>
+          <input type="text" name="supplier" id="editUnitSupplier" class="form-control" placeholder="Nama supplier...">
         </div>
 
         <div class="form-group">
@@ -301,59 +296,107 @@ include __DIR__ . '/../../includes/header.php';
   </div>
 </div>
 
-<!-- Bulk status form (hidden) -->
-<form method="POST" action="unit_save.php" id="bulkForm">
-  <input type="hidden" name="bulk_ids" id="bulkIds">
-  <input type="hidden" name="bulk_status" id="bulkStatus">
-  <input type="hidden" name="item_id" value="<?= $item['id'] ?>">
-  <input type="hidden" name="_redirect" value="units.php?item_id=<?= $item['id'] ?>">
-  <input type="hidden" name="action" value="bulk_status">
-</form>
+<!-- Lapor Pemeliharaan Modal -->
+<div class="modal-overlay" id="maintModal">
+  <div class="modal" style="max-width:520px;">
+    <div class="modal-header">
+      <div class="modal-title">Lapor Pemeliharaan</div>
+      <button class="modal-close" onclick="closeModal('maintModal')">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <form method="POST" action="<?= APP_URL ?>/modules/maintenance/form.php" style="display:flex;flex-direction:column;flex:1;min-height:0;">
+      <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;">
+        <input type="hidden" name="item_id"   id="maintItemId">
+        <input type="hidden" name="unit_id"   id="maintUnitId">
+        <input type="hidden" name="_redirect" value="<?= APP_URL ?>/modules/inventory/units.php?item_id=<?= $item['id'] ?>">
 
+        <div style="background:var(--bg-elevated);border-radius:var(--radius-sm);padding:10px 14px;font-family:monospace;font-size:0.85rem;color:var(--warning);" id="maintUnitCode"></div>
+
+        <div class="form-group" style="margin:0;">
+          <label class="form-label">Judul Laporan <span class="required">*</span></label>
+          <input type="text" name="title" id="maintTitle" class="form-control" required
+                 placeholder="Deskripsi singkat masalah atau tindakan...">
+        </div>
+
+        <div class="form-grid" style="grid-template-columns:1fr 1fr;">
+          <div class="form-group" style="margin:0;">
+            <label class="form-label">Tipe</label>
+            <select name="type" class="form-control">
+              <option value="corrective">Korektif (Perbaikan)</option>
+              <option value="preventive">Preventif (Rutin)</option>
+              <option value="inspection">Inspeksi</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label class="form-label">Prioritas</label>
+            <select name="priority" class="form-control">
+              <option value="low">Rendah</option>
+              <option value="medium" selected>Sedang</option>
+              <option value="high">Tinggi</option>
+              <option value="critical">Kritis</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group" style="margin:0;">
+          <label class="form-label">Deskripsi Masalah</label>
+          <textarea name="description" class="form-control" rows="3"
+                    placeholder="Jelaskan masalah secara detail..."></textarea>
+        </div>
+
+        <?php if (isAdmin()): ?>
+        <div style="height:1px;background:var(--border);"></div>
+        <div class="form-grid" style="grid-template-columns:1fr 1fr;">
+          <div class="form-group" style="margin:0;">
+            <label class="form-label">Jadwal Perbaikan</label>
+            <input type="date" name="scheduled_date" class="form-control">
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label class="form-label">Estimasi Biaya (Rp)</label>
+            <input type="number" name="cost" class="form-control" min="0" placeholder="0">
+          </div>
+          <div class="form-group full" style="margin:0;">
+            <label class="form-label">Teknisi / Vendor</label>
+            <input type="text" name="technician" class="form-control" placeholder="Nama teknisi...">
+          </div>
+        </div>
+        <?php endif; ?>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" onclick="closeModal('maintModal')">Batal</button>
+        <button type="submit" class="btn btn-primary">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+          Kirim Laporan
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
 <?php endif; ?>
 
 <script>
+function openMaintModal(u) {
+  document.getElementById('maintItemId').value    = u.item_id;
+  document.getElementById('maintUnitId').value    = u.id;
+  document.getElementById('maintUnitCode').textContent = u.full_code;
+  document.getElementById('maintTitle').value     = '';
+  openModal('maintModal');
+}
+
 function openEditModal(unit) {
   document.getElementById('editUnitId').value             = unit.id;
   document.getElementById('editUnitFullCode').textContent = unit.full_code;
   document.getElementById('editUnitStatus').value         = unit.status;
   document.getElementById('editUnitCondition').value      = unit.condition;
+  document.getElementById('editUnitAcquired').value       = unit.acquired_date || '';
   document.getElementById('editUnitPrice').value          = unit.purchase_price || '';
-  document.getElementById('editUnitSerial').value         = unit.serial_number || '';
+  document.getElementById('editUnitSupplier').value       = unit.supplier || '';
   document.getElementById('editUnitLocation').value       = unit.location_id || '';
   document.getElementById('editUnitNotes').value          = unit.notes || '';
   openModal('editUnitModal');
 }
 
-// Checkbox select-all
-function toggleAll(cb) {
-  document.querySelectorAll('.row-check').forEach(c => c.checked = cb.checked);
-  updateBulkBar();
-}
-
-document.querySelectorAll('.row-check').forEach(c => c.addEventListener('change', updateBulkBar));
-
-function updateBulkBar() {
-  const checked = document.querySelectorAll('.row-check:checked');
-  const bar = document.getElementById('bulkBar');
-  if (!bar) return;
-  if (checked.length > 0) {
-    bar.style.display = 'flex';
-    document.getElementById('bulkCount').textContent = checked.length + ' unit dipilih';
-  } else {
-    bar.style.display = 'none';
-  }
-}
-
-function bulkChangeStatus(status) {
-  const checked = document.querySelectorAll('.row-check:checked');
-  if (!checked.length) return;
-  const ids = Array.from(checked).map(c => c.value).join(',');
-  if (!confirm(`Ubah ${checked.length} unit ke status "${status}"?`)) return;
-  document.getElementById('bulkIds').value   = ids;
-  document.getElementById('bulkStatus').value = status;
-  document.getElementById('bulkForm').submit();
-}
 </script>
 
 <?php include __DIR__ . '/../../includes/footer.php'; ?>

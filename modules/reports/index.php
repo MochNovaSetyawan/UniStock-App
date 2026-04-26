@@ -86,85 +86,118 @@ include __DIR__ . '/../../includes/header.php';
   </button>
 </div>
 
+<?php
+// Format angka kompak untuk stat card
+function fmtCompact($val) {
+    if (!$val) return '—';
+    if ($val >= 1000000000) return 'Rp ' . number_format($val/1000000000, 1, ',', '.') . ' M';
+    if ($val >= 1000000)    return 'Rp ' . number_format($val/1000000,    1, ',', '.') . ' Jt';
+    if ($val >= 1000)       return 'Rp ' . number_format($val/1000,       0, ',', '.') . ' Rb';
+    return 'Rp ' . number_format($val, 0, ',', '.');
+}
+$cards = [
+    ['color'=>'rgba(99,102,241,0.15)',  'stroke'=>'var(--accent-light)', 'tag'=>'Inventaris',
+     'icon'=>'<path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10"/>',
+     'value'=> number_format($sumStats['items_total']),
+     'label'=>'Barang Aktif', 'sub'=>''],
+
+    ['color'=>'rgba(34,197,94,0.15)',   'stroke'=>'var(--success)',      'tag'=>'Nilai Aset',
+     'icon'=>'<path stroke-linecap="round" stroke-linejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>',
+     'value'=> fmtCompact($sumStats['items_value']),
+     'label'=>'Total Nilai Aset', 'sub'=>''],
+
+    ['color'=>'rgba(59,130,246,0.15)',  'stroke'=>'var(--info)',         'tag'=>'Bulan Ini',
+     'icon'=>'<path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>',
+     'value'=> $sumStats['borrows_month'],
+     'label'=>'Dipinjam', 'sub'=>$sumStats['returns_month'].' kembali'],
+
+    ['color'=>'rgba(239,68,68,0.15)',   'stroke'=>'var(--danger)',       'tag'=>'Overdue',
+     'icon'=>'<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>',
+     'value'=> $sumStats['overdue_now'],
+     'label'=>'Terlambat Kembali', 'sub'=>'',
+     'danger'=> $sumStats['overdue_now'] > 0],
+
+    ['color'=>'rgba(245,158,11,0.15)',  'stroke'=>'var(--warning)',      'tag'=>'Maintenance',
+     'icon'=>'<path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>',
+     'value'=> fmtCompact($sumStats['maintenance_cost']),
+     'label'=>'Biaya Pemeliharaan', 'sub'=>''],
+];
+?>
 <!-- Summary Cards -->
-<div class="stats-grid mb-28">
-  <div class="stat-card">
-    <div class="stat-icon indigo">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10"/></svg>
-    </div>
-    <div class="stat-info">
-      <div class="stat-value"><?= number_format($sumStats['items_total']) ?></div>
-      <div class="stat-label">Total Barang Aktif</div>
-    </div>
-  </div>
-
-  <div class="stat-card">
-    <div class="stat-icon green">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-    </div>
-    <div class="stat-info">
-      <div class="stat-value" style="font-size:1.3rem;">
-        <?= $sumStats['items_value'] ? 'Rp ' . number_format($sumStats['items_value'], 0, ',', '.') : '-' ?>
+<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:24px;">
+<?php foreach ($cards as $c): ?>
+  <div class="card" style="margin:0;<?= !empty($c['danger']) ? 'border-color:rgba(239,68,68,0.3);' : '' ?>">
+    <div class="card-body" style="padding:16px 18px;">
+      <!-- Icon + tag -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <div style="width:34px;height:34px;border-radius:9px;background:<?= $c['color'] ?>;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="<?= $c['stroke'] ?>"><?= $c['icon'] ?></svg>
+        </div>
+        <span style="font-size:0.7rem;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;"><?= $c['tag'] ?></span>
       </div>
-      <div class="stat-label">Total Nilai Aset</div>
-    </div>
-  </div>
-
-  <div class="stat-card">
-    <div class="stat-icon blue">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
-    </div>
-    <div class="stat-info">
-      <div class="stat-value"><?= $sumStats['borrows_month'] ?></div>
-      <div class="stat-label">Pinjam Bulan Ini</div>
-      <div class="stat-change"><?= $sumStats['returns_month'] ?> dikembalikan</div>
-    </div>
-  </div>
-
-  <div class="stat-card" style="<?= $sumStats['overdue_now'] > 0 ? 'border-color:rgba(239,68,68,0.3)' : '' ?>">
-    <div class="stat-icon red">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-    </div>
-    <div class="stat-info">
-      <div class="stat-value" style="<?= $sumStats['overdue_now'] > 0 ? 'color:var(--danger)' : '' ?>">
-        <?= $sumStats['overdue_now'] ?>
+      <!-- Value -->
+      <div style="font-size:1.5rem;font-weight:800;line-height:1.1;color:<?= !empty($c['danger']) ? 'var(--danger)' : 'var(--text-primary)' ?>;">
+        <?= $c['value'] ?>
       </div>
-      <div class="stat-label">Terlambat Kembali</div>
-    </div>
-  </div>
-
-  <div class="stat-card">
-    <div class="stat-icon amber">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-    </div>
-    <div class="stat-info">
-      <div class="stat-value">
-        <?= $sumStats['maintenance_cost'] ? 'Rp ' . number_format($sumStats['maintenance_cost'], 0, ',', '.') : '-' ?>
+      <!-- Label + sub -->
+      <div style="margin-top:5px;font-size:0.75rem;color:var(--text-muted);">
+        <?= $c['label'] ?>
+        <?php if ($c['sub']): ?>
+        &nbsp;<span style="color:var(--success);font-weight:600;"><?= $c['sub'] ?></span>
+        <?php endif; ?>
       </div>
-      <div class="stat-label">Biaya Pemeliharaan</div>
     </div>
   </div>
+<?php endforeach; ?>
 </div>
 
 <!-- Filter & Table -->
 <div class="card">
   <!-- Toolbar -->
-  <div class="table-toolbar">
+  <div class="table-toolbar" style="flex-wrap:wrap;gap:10px;">
     <form method="GET" style="display:contents;">
-      <div class="tabs" style="margin-bottom:0;background:transparent;border:none;padding:0;">
-        <?php foreach (['inventory' => 'Inventaris', 'transactions' => 'Transaksi', 'maintenance' => 'Pemeliharaan'] as $t => $l): ?>
+
+      <!-- Tab jenis laporan -->
+      <div style="display:flex;background:var(--bg-elevated);border-radius:8px;padding:3px;gap:2px;">
+        <?php
+        $tabIcons = [
+          'inventory'    => '<path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10"/>',
+          'transactions' => '<path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>',
+          'maintenance'  => '<path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>',
+        ];
+        foreach (['inventory' => 'Inventaris', 'transactions' => 'Transaksi', 'maintenance' => 'Pemeliharaan'] as $t => $l):
+          $active = $type === $t;
+        ?>
         <a href="?type=<?= $t ?>&date_from=<?= $dateFrom ?>&date_to=<?= $dateTo ?>"
-           class="tab-btn <?= $type === $t ? 'active' : '' ?>"><?= $l ?></a>
+           style="display:flex;align-items:center;gap:6px;padding:6px 14px;border-radius:6px;font-size:0.8rem;font-weight:600;text-decoration:none;transition:all 0.15s;
+                  <?= $active ? 'background:var(--accent);color:#fff;' : 'color:var(--text-muted);' ?>">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><?= $tabIcons[$t] ?></svg>
+          <?= $l ?>
+        </a>
         <?php endforeach; ?>
       </div>
+
+      <!-- Filter tanggal (transaksi & pemeliharaan) -->
       <?php if ($type !== 'inventory'): ?>
       <input type="hidden" name="type" value="<?= $type ?>">
-      <input type="date" name="date_from" class="filter-select" value="<?= $dateFrom ?>">
-      <span style="color:var(--text-muted);">s/d</span>
-      <input type="date" name="date_to" class="filter-select" value="<?= $dateTo ?>">
-      <button type="submit" class="btn btn-outline btn-sm">Filter</button>
+      <div style="display:flex;align-items:center;gap:8px;background:var(--bg-elevated);border-radius:8px;padding:4px 10px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" style="color:var(--text-muted);flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        <input type="date" name="date_from" class="filter-select" value="<?= $dateFrom ?>"
+               style="background:transparent;border:none;padding:0;font-size:0.8rem;color:var(--text-primary);outline:none;">
+        <span style="color:var(--text-muted);font-size:0.78rem;">—</span>
+        <input type="date" name="date_to" class="filter-select" value="<?= $dateTo ?>"
+               style="background:transparent;border:none;padding:0;font-size:0.8rem;color:var(--text-primary);outline:none;">
+        <button type="submit" class="btn btn-primary btn-sm" style="padding:4px 12px;font-size:0.78rem;">Terapkan</button>
+      </div>
       <?php endif; ?>
-      <span style="margin-left:auto;font-size:0.78rem;color:var(--text-muted);"><?= count($data) ?> baris data</span>
+
+      <!-- Jumlah data -->
+      <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+        <span style="font-size:0.75rem;color:var(--text-muted);">
+          <?= count($data) ?> baris
+        </span>
+      </div>
+
     </form>
   </div>
 
