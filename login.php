@@ -1,14 +1,20 @@
 <?php
-require_once __DIR__ . '/includes/config.php';
-require_once __DIR__ . '/includes/auth.php';
-require_once __DIR__ . '/includes/functions.php';
 
-if (isLoggedIn()) {
+declare(strict_types=1);
+
+require_once __DIR__ . '/bootstrap.php';
+
+use App\Core\Auth;
+use App\Core\Session;
+use App\Helpers\Format;
+use App\Models\Setting;
+
+if (Auth::check()) {
     header('Location: ' . APP_URL . '/dashboard.php');
     exit;
 }
 
-// ── Mode AJAX (fetch dari JS) ────────────────────────────────────────────────
+// ── AJAX login ───────────────────────────────────────────────────────────────
 if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Content-Type: application/json');
     $username = trim($_POST['username'] ?? '');
@@ -18,17 +24,17 @@ if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && $_SERVER['REQUEST_METHOD'] === 
         echo json_encode(['ok' => false, 'error' => 'Username dan password wajib diisi.']);
         exit;
     }
-    if (login($username, $password)) {
-        echo json_encode(['ok' => true, 'name' => $_SESSION['user_name']]);
+    if (Auth::login($username, $password)) {
+        echo json_encode(['ok' => true, 'name' => Session::get('user_name')]);
     } else {
         echo json_encode(['ok' => false, 'error' => 'Username atau password salah. Silakan coba lagi.']);
     }
     exit;
 }
 
-$appName = getSetting('app_name', 'Unistock');
-$uniName = getSetting('university_name', 'Universitas Nusantara');
-$appLogo = getSetting('app_logo', '');
+$appName = Setting::get('app_name', 'Unistock');
+$uniName = Setting::get('university_name', 'Universitas Nusantara');
+$appLogo = Setting::get('app_logo', '');
 $logoUrl = ($appLogo && file_exists(UPLOAD_PATH . $appLogo)) ? UPLOAD_URL . $appLogo : '';
 ?>
 <!DOCTYPE html>
@@ -36,7 +42,7 @@ $logoUrl = ($appLogo && file_exists(UPLOAD_PATH . $appLogo)) ? UPLOAD_URL . $app
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Login &mdash; <?= sanitize($appName) ?></title>
+  <title>Login &mdash; <?= Format::escape($appName) ?></title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="<?= APP_URL ?>/assets/css/style.css">
@@ -109,7 +115,7 @@ $logoUrl = ($appLogo && file_exists(UPLOAD_PATH . $appLogo)) ? UPLOAD_URL . $app
     <div class="login-logo">
       <div class="login-logo-icon" <?= $logoUrl ? 'style="background:transparent;box-shadow:none;padding:0;"' : '' ?>>
         <?php if ($logoUrl): ?>
-          <img src="<?= htmlspecialchars($logoUrl) ?>" alt="<?= sanitize($appName) ?>"
+          <img src="<?= htmlspecialchars($logoUrl) ?>" alt="<?= Format::escape($appName) ?>"
                style="width:100%;height:100%;object-fit:contain;border-radius:8px;">
         <?php else: ?>
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
@@ -117,8 +123,8 @@ $logoUrl = ($appLogo && file_exists(UPLOAD_PATH . $appLogo)) ? UPLOAD_URL . $app
           </svg>
         <?php endif; ?>
       </div>
-      <h1><?= sanitize($appName) ?></h1>
-      <p><?= sanitize($uniName) ?></p>
+      <h1><?= Format::escape($appName) ?></h1>
+      <p><?= Format::escape($uniName) ?></p>
     </div>
 
     <h2 class="login-title">Masuk ke Akun Anda</h2>
@@ -199,7 +205,6 @@ document.getElementById('loginForm').addEventListener('submit', function(e) {
   const errMsg  = document.getElementById('errorMsg');
   const overlay = document.getElementById('welcomeOverlay');
 
-  // Nonaktifkan tombol + tampilkan loading
   btn.disabled = true;
   btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" style="animation:spin 0.8s linear infinite"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg> Memuat...';
   errBox.style.display = 'none';
@@ -214,7 +219,6 @@ document.getElementById('loginForm').addEventListener('submit', function(e) {
   .then(r => r.json())
   .then(data => {
     if (!data.ok) {
-      // Gagal login — tampilkan error
       errMsg.textContent = data.error || 'Login gagal.';
       errBox.style.display = 'flex';
       btn.disabled = false;
@@ -222,11 +226,9 @@ document.getElementById('loginForm').addEventListener('submit', function(e) {
       return;
     }
 
-    // Berhasil — tampilkan animasi selamat datang
     document.getElementById('welcomeName').textContent = data.name;
     overlay.classList.add('show');
 
-    // Redirect setelah animasi selesai (1.8 detik)
     setTimeout(function() {
       window.location.href = '<?= APP_URL ?>/dashboard.php';
     }, 1800);

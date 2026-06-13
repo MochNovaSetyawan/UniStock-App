@@ -1,16 +1,23 @@
 <?php
-require_once __DIR__ . '/../../includes/config.php';
-require_once __DIR__ . '/../../includes/auth.php';
-require_once __DIR__ . '/../../includes/functions.php';
-requireLogin();
+
+declare(strict_types=1);
+
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
+
+use App\Core\Auth;
+use App\Core\Database;
+use App\Core\Session;
+use App\Helpers\Format;
+use App\Services\AuditService;
+
+Auth::requireLogin();
 
 $pageTitle = 'Kategori';
-$db = getDB();
+$pdo = Database::getInstance();
 
-// Handle add/edit via modal POST
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isAdmin()) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && Auth::isAdmin()) {
     $action = $_POST['action'] ?? '';
-    $id = (int)($_POST['id'] ?? 0);
+    $id     = (int)($_POST['id'] ?? 0);
 
     if ($action === 'save') {
         $data = [
@@ -20,47 +27,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isAdmin()) {
             'color'       => $_POST['color'] ?? '#6366f1',
             'icon'        => trim($_POST['icon'] ?? 'box'),
         ];
-        if (!$data['name'] || !$data['code']) { flashMessage('error', 'Nama dan kode wajib diisi.'); }
-        else {
+        if (!$data['name'] || !$data['code']) {
+            Session::flash('error', 'Nama dan kode wajib diisi.');
+        } else {
             if ($id) {
-                $db->prepare("UPDATE categories SET name=?,code=?,description=?,color=?,icon=? WHERE id=?")
-                   ->execute([$data['name'],$data['code'],$data['description'],$data['color'],$data['icon'],$id]);
-                auditLog('UPDATE', 'categories', $id, 'Category updated: '.$data['name']);
-                flashMessage('success', 'Kategori berhasil diperbarui.');
+                $pdo->prepare("UPDATE categories SET name=?,code=?,description=?,color=?,icon=? WHERE id=?")
+                    ->execute([$data['name'], $data['code'], $data['description'], $data['color'], $data['icon'], $id]);
+                AuditService::log('UPDATE', 'categories', $id, 'Category updated: ' . $data['name']);
+                Session::flash('success', 'Kategori berhasil diperbarui.');
             } else {
-                $check = $db->prepare("SELECT id FROM categories WHERE code=?"); $check->execute([$data['code']]);
-                if ($check->fetch()) { flashMessage('error', 'Kode kategori sudah digunakan.'); }
-                else {
-                    $data['created_by'] = $_SESSION['user_id'];
-                    $db->prepare("INSERT INTO categories (name,code,description,color,icon,created_by) VALUES (?,?,?,?,?,?)")
-                       ->execute(array_values($data));
-                    auditLog('CREATE', 'categories', $db->lastInsertId(), 'Category created: '.$data['name']);
-                    flashMessage('success', 'Kategori berhasil ditambahkan.');
+                $check = $pdo->prepare("SELECT id FROM categories WHERE code=?");
+                $check->execute([$data['code']]);
+                if ($check->fetch()) {
+                    Session::flash('error', 'Kode kategori sudah digunakan.');
+                } else {
+                    $data['created_by'] = Auth::id();
+                    $pdo->prepare("INSERT INTO categories (name,code,description,color,icon,created_by) VALUES (?,?,?,?,?,?)")
+                        ->execute(array_values($data));
+                    AuditService::log('CREATE', 'categories', (int)$pdo->lastInsertId(), 'Category created: ' . $data['name']);
+                    Session::flash('success', 'Kategori berhasil ditambahkan.');
                 }
             }
         }
     } elseif ($action === 'delete') {
-        $items = $db->prepare("SELECT COUNT(*) FROM items WHERE category_id = ?"); $items->execute([$id]);
-        if ($items->fetchColumn() > 0) { flashMessage('error', 'Kategori tidak dapat dihapus karena masih memiliki barang.'); }
-        else {
-            $cat = $db->prepare("SELECT name FROM categories WHERE id=?"); $cat->execute([$id]); $catData = $cat->fetch();
-            $db->prepare("DELETE FROM categories WHERE id=?")->execute([$id]);
-            auditLog('DELETE', 'categories', $id, 'Category deleted: '.($catData['name']??''));
-            flashMessage('success', 'Kategori berhasil dihapus.');
+        $items = $pdo->prepare("SELECT COUNT(*) FROM items WHERE category_id = ?");
+        $items->execute([$id]);
+        if ($items->fetchColumn() > 0) {
+            Session::flash('error', 'Kategori tidak dapat dihapus karena masih memiliki barang.');
+        } else {
+            $cat = $pdo->prepare("SELECT name FROM categories WHERE id=?");
+            $cat->execute([$id]);
+            $catData = $cat->fetch();
+            $pdo->prepare("DELETE FROM categories WHERE id=?")->execute([$id]);
+            AuditService::log('DELETE', 'categories', $id, 'Category deleted: ' . ($catData['name'] ?? ''));
+            Session::flash('success', 'Kategori berhasil dihapus.');
         }
     }
-    header('Location: index.php'); exit;
+    header('Location: index.php');
+    exit;
 }
 
-$categories = $db->query("
-    SELECT c.*, COUNT(i.id) as item_count
+$categories = $pdo->query("
+    SELECT c.*, COUNT(i.id) AS item_count
     FROM categories c
     LEFT JOIN items i ON c.id = i.category_id AND i.status = 'active'
     GROUP BY c.id
     ORDER BY c.name
 ")->fetchAll();
 
-include __DIR__ . '/../../includes/header.php';
+include dirname(__DIR__, 2) . '/includes/header.php';
 ?>
 
 <div class="page-header">
@@ -73,7 +88,7 @@ include __DIR__ . '/../../includes/header.php';
     <h2>Kategori Barang</h2>
     <p>Kelola kategori inventaris</p>
   </div>
-  <?php if (isAdmin()): ?>
+  <?php if (Auth::isAdmin()): ?>
   <button class="btn btn-primary" onclick="openModal('modalCategory')">
     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>
     Tambah Kategori
@@ -83,19 +98,19 @@ include __DIR__ . '/../../includes/header.php';
 
 <div class="cat-grid">
   <?php foreach ($categories as $cat): ?>
-  <div class="card" style="transition: all 0.2s;" onmouseover="this.style.borderColor=this.dataset.color" onmouseout="this.style.borderColor=''" data-color="<?= sanitize($cat['color']) ?>">
+  <div class="card" style="transition: all 0.2s;" onmouseover="this.style.borderColor=this.dataset.color" onmouseout="this.style.borderColor=''" data-color="<?= Format::escape($cat['color']) ?>">
     <div class="card-body">
       <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;">
         <div style="display: flex; align-items: center; gap: 14px;">
-          <div style="width: 48px; height: 48px; border-radius: var(--radius); background: <?= sanitize($cat['color']) ?>22; border: 1px solid <?= sanitize($cat['color']) ?>44; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-            <div style="width: 16px; height: 16px; border-radius: 3px; background: <?= sanitize($cat['color']) ?>;"></div>
+          <div style="width: 48px; height: 48px; border-radius: var(--radius); background: <?= Format::escape($cat['color']) ?>22; border: 1px solid <?= Format::escape($cat['color']) ?>44; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+            <div style="width: 16px; height: 16px; border-radius: 3px; background: <?= Format::escape($cat['color']) ?>;"></div>
           </div>
           <div>
-            <div class="table-item-name" style="font-size:0.95rem;font-weight:600;"><?= sanitize($cat['name']) ?></div>
-            <div class="table-item-code mono"><?= sanitize($cat['code']) ?></div>
+            <div class="table-item-name" style="font-size:0.95rem;font-weight:600;"><?= Format::escape($cat['name']) ?></div>
+            <div class="table-item-code mono"><?= Format::escape($cat['code']) ?></div>
           </div>
         </div>
-        <?php if (isAdmin()): ?>
+        <?php if (Auth::isAdmin()): ?>
         <div class="dropdown" id="catDrop<?= $cat['id'] ?>">
           <button class="btn btn-ghost btn-icon btn-sm" onclick="toggleDropdown('catDrop<?= $cat['id'] ?>')">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
@@ -107,7 +122,7 @@ include __DIR__ . '/../../includes/header.php';
             </div>
             <form method="POST" style="display:contents;">
               <input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="<?= $cat['id'] ?>">
-              <div class="dropdown-item danger" onclick="confirmDelete('Hapus kategori <?= sanitize(addslashes($cat['name'])) ?>?', this.closest('form'))">
+              <div class="dropdown-item danger" onclick="confirmDelete('Hapus kategori <?= Format::escape(addslashes($cat['name'])) ?>?', this.closest('form'))">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
                 Hapus
               </div>
@@ -117,11 +132,11 @@ include __DIR__ . '/../../includes/header.php';
         <?php endif; ?>
       </div>
       <?php if ($cat['description']): ?>
-      <p class="table-item-sub" style="margin-top: 12px; line-height: 1.5;"><?= sanitize($cat['description']) ?></p>
+      <p class="table-item-sub" style="margin-top: 12px; line-height: 1.5;"><?= Format::escape($cat['description']) ?></p>
       <?php endif; ?>
       <div style="margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between;">
         <span class="table-item-sub">Total Barang</span>
-        <a href="<?= APP_URL ?>/modules/inventory/index.php?category=<?= $cat['id'] ?>" style="font-size: 1.1rem; font-weight: 700; color: <?= sanitize($cat['color']) ?>;"><?= $cat['item_count'] ?></a>
+        <a href="<?= APP_URL ?>/modules/inventory/index.php?category=<?= $cat['id'] ?>" style="font-size: 1.1rem; font-weight: 700; color: <?= Format::escape($cat['color']) ?>;"><?= $cat['item_count'] ?></a>
       </div>
     </div>
   </div>
@@ -138,8 +153,7 @@ include __DIR__ . '/../../includes/header.php';
   <?php endif; ?>
 </div>
 
-<!-- Add/Edit Modal -->
-<?php if (isAdmin()): ?>
+<?php if (Auth::isAdmin()): ?>
 <div class="modal-overlay" id="modalCategory">
   <div class="modal">
     <div class="modal-header">
@@ -191,4 +205,4 @@ function editCategory(cat) {
 </script>
 <?php endif; ?>
 
-<?php include __DIR__ . '/../../includes/footer.php'; ?>
+<?php include dirname(__DIR__, 2) . '/includes/footer.php'; ?>

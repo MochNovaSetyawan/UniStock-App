@@ -1,26 +1,30 @@
 <?php
-// ============================================
-// UNISTOCK - Mark Notifications as Read (AJAX)
-// POST id=X  → tandai satu notif
-// POST id=0  → tandai semua notif
-// ============================================
-require_once __DIR__ . '/config.php';
-require_once __DIR__ . '/auth.php';
-require_once __DIR__ . '/functions.php';
+
+declare(strict_types=1);
+
+require_once dirname(__DIR__) . '/bootstrap.php';
+
+use App\Core\Auth;
+use App\Core\Database;
+use App\Services\NotificationService;
 
 header('Content-Type: application/json');
-if (!isLoggedIn()) { echo json_encode(['ok' => false]); exit; }
 
-$db  = getDB();
-$me  = (int)$_SESSION['user_id'];
+if (!Auth::check()) {
+    echo json_encode(['ok' => false]);
+    exit;
+}
+
+$pdo = Database::getInstance();
+$me  = Auth::id();
 $id  = (int)($_POST['id'] ?? 0);
 
 if ($id > 0) {
-    $db->prepare("UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?")
-       ->execute([$id, $me]);
+    $pdo->prepare("UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?")
+        ->execute([$id, $me]);
 } else {
-    $db->prepare("UPDATE notifications SET is_read = 1 WHERE user_id = ?")
-       ->execute([$me]);
+    $pdo->prepare("UPDATE notifications SET is_read = 1 WHERE user_id = ?")
+        ->execute([$me]);
 }
 
-echo json_encode(['ok' => true, 'unread' => countUnreadNotifications()]);
+echo json_encode(['ok' => true, 'unread' => NotificationService::countUnread()]);

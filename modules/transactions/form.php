@@ -1,16 +1,25 @@
 <?php
-require_once __DIR__ . '/../../includes/config.php';
-require_once __DIR__ . '/../../includes/auth.php';
-require_once __DIR__ . '/../../includes/functions.php';
-requireLogin();
+declare(strict_types=1);
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
+
+use App\Core\Auth;
+use App\Core\Database;
+use App\Core\Session;
+use App\Helpers\Format;
+use App\Models\Item;
+use App\Models\Setting;
+use App\Services\AuditService;
+use App\Services\CodeGenerator;
+
+Auth::requireLogin();
 
 $pageTitle = 'Pinjam Barang';
-$db = getDB();
+$pdo = Database::getInstance();
 
 $preItemId = (int)($_GET['item_id'] ?? 0);
 $preItem   = null;
 if ($preItemId) {
-    $stmt = $db->prepare("SELECT * FROM items WHERE id = ? AND status = 'active'");
+    $stmt = $pdo->prepare("SELECT * FROM items WHERE id = ? AND status = 'active'");
     $stmt->execute([$preItemId]);
     $preItem = $stmt->fetch();
 }
@@ -36,7 +45,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (empty($errors)) {
         // Verify item exists
-        $stmt = $db->prepare("SELECT * FROM items WHERE id = ? AND status = 'active'");
+        $stmt = $pdo->prepare("SELECT * FROM items WHERE id = ? AND status = 'active'");
         $stmt->execute([$itemId]);
         $item = $stmt->fetch();
         if (!$item) $errors[] = 'Barang tidak ditemukan.';
@@ -45,10 +54,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($errors)) {
         // Verify all selected units are still available for this item
         $placeholders = implode(',', array_fill(0, count($unitIds), '?'));
-        $chk = $db->prepare("SELECT id FROM item_units
+        $chk = $pdo->prepare("SELECT id FROM item_units
             WHERE id IN ({$placeholders}) AND item_id = ? AND status = 'available'");
         $chk->execute(array_merge($unitIds, [$itemId]));
-        $validUnits = $chk->fetchAll(PDO::FETCH_COLUMN);
+        $validUnits = $chk->fetchAll(\PDO::FETCH_COLUMN);
 
         if (count($validUnits) !== count($unitIds)) {
             $errors[] = 'Beberapa unit yang dipilih sudah tidak tersedia. Silakan pilih ulang.';
@@ -56,15 +65,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (empty($errors)) {
-        $db->beginTransaction();
+        $pdo->beginTransaction();
         try {
-            $code        = generateCode('TRX', 'transactions');
-            $needApproval= (int)getSetting('require_approval', 1);
-            $unitStatus  = isAdmin() ? 'borrowed' : 'reserved';
-            $txStatus    = isAdmin() ? 'active'   : 'pending';
+            $code        = CodeGenerator::generate('TRX', 'transactions');
+            $needApproval= (int)Setting::get('require_approval', 1);
+            $unitStatus  = Auth::isAdmin() ? 'borrowed' : 'reserved';
+            $txStatus    = Auth::isAdmin() ? 'active'   : 'pending';
 
             // Insert transaction
-            $db->prepare("
+            $pdo->prepare("
                 INSERT INTO transactions
                     (code,type,item_id,quantity,borrower_name,borrower_id_number,
                      borrower_department,borrower_phone,purpose,borrow_date,
@@ -74,40 +83,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $code, 'borrow', $itemId, $quantity,
                 $borrowerName, $borrowerIdNum, $borrowerDept, $borrowerPhone,
                 $purpose, $borrowDate, $expectedReturn, $txStatus, $notes,
-                $_SESSION['user_id'],
-                isAdmin() ? $_SESSION['user_id'] : null,
-                isAdmin() ? date('Y-m-d H:i:s')  : null,
+                Auth::id(),
+                Auth::isAdmin() ? Auth::id() : null,
+                Auth::isAdmin() ? date('Y-m-d H:i:s')  : null,
             ]);
-            $txId = (int)$db->lastInsertId();
+            $txId = (int)$pdo->lastInsertId();
 
             // Link units to transaction + update unit status
-            $insLink = $db->prepare("INSERT INTO transaction_units (transaction_id, unit_id) VALUES (?,?)");
-            $updUnit = $db->prepare("UPDATE item_units SET status = ?, updated_at = NOW() WHERE id = ?");
+            $insLink = $pdo->prepare("INSERT INTO transaction_units (transaction_id, unit_id) VALUES (?,?)");
+            $updUnit = $pdo->prepare("UPDATE item_units SET status = ?, updated_at = NOW() WHERE id = ?");
             foreach ($unitIds as $uid) {
                 $insLink->execute([$txId, $uid]);
                 $updUnit->execute([$unitStatus, $uid]);
             }
 
             // Sync quantity_available on item
-            syncItemAvailability($db, $itemId);
+            (new Item())->syncAvailability($itemId);
 
-            $db->commit();
-            auditLog('CREATE', 'transactions', $txId, "Borrow request: {$code} ({$quantity} unit)");
+            $pdo->commit();
+            AuditService::log('CREATE', 'transactions', $txId, "Borrow request: {$code} ({$quantity} unit)");
 
-            $msg = isAdmin()
+            $msg = Auth::isAdmin()
                 ? "Peminjaman <strong>{$code}</strong> berhasil dicatat. {$quantity} unit dipinjam."
                 : "Permohonan <strong>{$code}</strong> diajukan. {$quantity} unit direservasi, menunggu persetujuan admin.";
-            flashMessage('success', $msg);
+            Session::flash('success', $msg);
             header('Location: index.php'); exit;
 
         } catch (Exception $e) {
-            $db->rollBack();
+            $pdo->rollBack();
             $errors[] = 'Terjadi kesalahan sistem: ' . $e->getMessage();
         }
     }
 }
 
-$items   = $db->query("
+$items   = $pdo->query("
     SELECT i.*, c.name as cat_name, c.code as cat_code
     FROM items i
     LEFT JOIN categories c ON i.category_id = c.id
@@ -116,9 +125,9 @@ $items   = $db->query("
     ORDER BY i.name
 ")->fetchAll();
 
-$maxDays = (int)getSetting('borrow_max_days', 14);
+$maxDays = (int)Setting::get('borrow_max_days', 14);
 
-include __DIR__ . '/../../includes/header.php';
+include dirname(__DIR__, 2) . '/includes/header.php';
 ?>
 
 <div class="page-header">
@@ -137,7 +146,7 @@ include __DIR__ . '/../../includes/header.php';
 <?php if (!empty($errors)): ?>
 <div class="alert alert-danger" style="margin-bottom:20px;">
   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="18" height="18"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-  <div><ul style="margin:4px 0 0 16px;"><?php foreach($errors as $e): ?><li><?= sanitize($e) ?></li><?php endforeach; ?></ul></div>
+  <div><ul style="margin:4px 0 0 16px;"><?php foreach($errors as $e): ?><li><?= Format::escape($e) ?></li><?php endforeach; ?></ul></div>
 </div>
 <?php endif; ?>
 
@@ -157,11 +166,11 @@ include __DIR__ . '/../../includes/header.php';
             <option value="">-- Pilih Barang --</option>
             <?php foreach ($items as $it): ?>
             <option value="<?= $it['id'] ?>"
-                    data-code="<?= sanitize($it['code']) ?>"
-                    data-cat="<?= sanitize($it['cat_name'] ?? '') ?>"
+                    data-code="<?= Format::escape($it['code']) ?>"
+                    data-cat="<?= Format::escape($it['cat_name'] ?? '') ?>"
                     <?= $preItemId == $it['id'] ? 'selected' : '' ?>>
-              <?= sanitize($it['name']) ?>
-              [<?= sanitize($it['code']) ?>]
+              <?= Format::escape($it['name']) ?>
+              [<?= Format::escape($it['code']) ?>]
             </option>
             <?php endforeach; ?>
           </select>
@@ -207,25 +216,25 @@ include __DIR__ . '/../../includes/header.php';
           <div class="form-group full">
             <label class="form-label">Nama Peminjam <span class="required">*</span></label>
             <input type="text" name="borrower_name" class="form-control" required
-                   value="<?= sanitize($_POST['borrower_name'] ?? $currentUser['full_name']) ?>"
+                   value="<?= Format::escape($_POST['borrower_name'] ?? $currentUser['full_name']) ?>"
                    placeholder="Nama lengkap peminjam">
           </div>
           <div class="form-group">
             <label class="form-label">NIM / NIP / ID</label>
             <input type="text" name="borrower_id_number" class="form-control"
-                   value="<?= sanitize($_POST['borrower_id_number'] ?? '') ?>"
+                   value="<?= Format::escape($_POST['borrower_id_number'] ?? '') ?>"
                    placeholder="NIM/NIP...">
           </div>
           <div class="form-group">
             <label class="form-label">Departemen / Fakultas</label>
             <input type="text" name="borrower_department" class="form-control"
-                   value="<?= sanitize($_POST['borrower_department'] ?? $currentUser['department'] ?? '') ?>"
+                   value="<?= Format::escape($_POST['borrower_department'] ?? $currentUser['department'] ?? '') ?>"
                    placeholder="Fakultas Teknik...">
           </div>
           <div class="form-group">
             <label class="form-label">No. Telepon</label>
             <input type="text" name="borrower_phone" class="form-control"
-                   value="<?= sanitize($_POST['borrower_phone'] ?? '') ?>"
+                   value="<?= Format::escape($_POST['borrower_phone'] ?? '') ?>"
                    placeholder="08xx-xxxx-xxxx">
           </div>
         </div>
@@ -250,11 +259,11 @@ include __DIR__ . '/../../includes/header.php';
           </div>
           <div class="form-group full">
             <label class="form-label">Keperluan / Tujuan</label>
-            <textarea name="purpose" class="form-control" rows="2" placeholder="Jelaskan keperluan peminjaman..."><?= sanitize($_POST['purpose'] ?? '') ?></textarea>
+            <textarea name="purpose" class="form-control" rows="2" placeholder="Jelaskan keperluan peminjaman..."><?= Format::escape($_POST['purpose'] ?? '') ?></textarea>
           </div>
           <div class="form-group full">
             <label class="form-label">Catatan Tambahan</label>
-            <textarea name="notes" class="form-control" rows="2" placeholder="Catatan opsional..."><?= sanitize($_POST['notes'] ?? '') ?></textarea>
+            <textarea name="notes" class="form-control" rows="2" placeholder="Catatan opsional..."><?= Format::escape($_POST['notes'] ?? '') ?></textarea>
           </div>
         </div>
       </div>
@@ -262,7 +271,7 @@ include __DIR__ . '/../../includes/header.php';
         <a href="index.php" class="btn btn-outline">Batal</a>
         <button type="submit" class="btn btn-primary" id="submitBtn" disabled>
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
-          <span id="submitLabel"><?= isAdmin() ? 'Catat Peminjaman' : 'Ajukan Permohonan' ?></span>
+          <span id="submitLabel"><?= Auth::isAdmin() ? 'Catat Peminjaman' : 'Ajukan Permohonan' ?></span>
         </button>
       </div>
     </div>
@@ -299,7 +308,7 @@ include __DIR__ . '/../../includes/header.php';
           <li>Centang unit-unit yang akan dipinjam</li>
           <li>Isi data peminjam dengan lengkap</li>
           <li>Tentukan jadwal pengembalian</li>
-          <?php if (!isAdmin()): ?><li>Tunggu persetujuan admin</li><?php endif; ?>
+          <?php if (!Auth::isAdmin()): ?><li>Tunggu persetujuan admin</li><?php endif; ?>
         </ol>
         <div style="margin-top:14px;background:var(--bg-surface);border-radius:var(--radius-sm);padding:12px;border:1px solid var(--border);">
           <div style="font-weight:600;color:var(--warning);margin-bottom:6px;">⚠ Perhatian</div>
@@ -429,8 +438,8 @@ function updateCount() {
   document.getElementById('unitSelectedCount').textContent = `(${n} dipilih dari ${allUnits.length} tersedia)`;
   document.getElementById('submitBtn').disabled = n === 0;
   const lbl = document.getElementById('submitLabel');
-  if (n > 0) lbl.textContent = `<?= isAdmin() ? 'Catat Peminjaman' : 'Ajukan Permohonan' ?> (${n} unit)`;
-  else       lbl.textContent = `<?= isAdmin() ? 'Catat Peminjaman' : 'Ajukan Permohonan' ?>`;
+  if (n > 0) lbl.textContent = `<?= Auth::isAdmin() ? 'Catat Peminjaman' : 'Ajukan Permohonan' ?> (${n} unit)`;
+  else       lbl.textContent = `<?= Auth::isAdmin() ? 'Catat Peminjaman' : 'Ajukan Permohonan' ?>`;
 }
 
 function updateSummary() {
@@ -469,4 +478,4 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
-<?php include __DIR__ . '/../../includes/footer.php'; ?>
+<?php include dirname(__DIR__, 2) . '/includes/footer.php'; ?>

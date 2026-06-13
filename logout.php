@@ -1,4 +1,9 @@
 <?php
-require_once __DIR__ . '/includes/config.php';
-require_once __DIR__ . '/includes/auth.php';
-logout();
+
+declare(strict_types=1);
+
+require_once __DIR__ . '/bootstrap.php';
+
+use App\Core\Auth;
+
+Auth::logout();

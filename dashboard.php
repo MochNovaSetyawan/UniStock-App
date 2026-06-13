@@ -1,38 +1,45 @@
 <?php
-require_once __DIR__ . '/includes/config.php';
-require_once __DIR__ . '/includes/auth.php';
-require_once __DIR__ . '/includes/functions.php';
-requireLogin();
 
-$pageTitle = 'Dashboard';
-$stats = getDashboardStats();
-$recentTransactions = getRecentTransactions(8);
-$categoryData = getItemsByCategory();
+declare(strict_types=1);
 
-// Recent maintenance
-$db = getDB();
-$recentMaintenance = $db->query("
-    SELECT m.*, i.name as item_name, i.code as item_code
+require_once __DIR__ . '/bootstrap.php';
+
+use App\Core\Auth;
+use App\Core\Database;
+use App\Helpers\Badge;
+use App\Helpers\Format;
+use App\Models\Item;
+use App\Models\Transaction;
+
+Auth::requireLogin();
+
+$pageTitle          = 'Dashboard';
+$stats              = (new Item())->getDashboardStats();
+$recentTransactions = (new Transaction())->getRecent(8);
+$categoryData       = (new Item())->getByCategory();
+
+$pdo = Database::getInstance();
+
+$recentMaintenance = $pdo->query("
+    SELECT m.*, i.name AS item_name, i.code AS item_code
     FROM maintenance m
     JOIN items i ON m.item_id = i.id
     ORDER BY m.created_at DESC LIMIT 5
 ")->fetchAll();
 
-// Low stock items
-$lowStockItems = $db->query("
-    SELECT i.*, c.name as category_name
+$lowStockItems = $pdo->query("
+    SELECT i.*, c.name AS category_name
     FROM items i
     LEFT JOIN categories c ON i.category_id = c.id
     WHERE i.quantity_available <= i.min_stock AND i.status = 'active'
     ORDER BY i.quantity_available ASC LIMIT 5
 ")->fetchAll();
 
-// Overdue transactions
-$overdueItems = $db->query("
-    SELECT t.*, i.name as item_name, i.code as item_code
+$overdueItems = $pdo->query("
+    SELECT t.*, i.name AS item_name, i.code AS item_code
     FROM transactions t
     JOIN items i ON t.item_id = i.id
-    WHERE t.type='borrow' AND t.status='active' AND t.expected_return < NOW()
+    WHERE t.type = 'borrow' AND t.status = 'active' AND t.expected_return < NOW()
     ORDER BY t.expected_return ASC LIMIT 5
 ")->fetchAll();
 
@@ -46,10 +53,10 @@ include __DIR__ . '/includes/header.php';
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
       Dashboard
     </div>
-    <h2>Selamat Datang, <?= sanitize(explode(' ', $currentUser['full_name'])[0]) ?> 👋</h2>
+    <h2>Selamat Datang, <?= Format::escape(explode(' ', $currentUser['full_name'])[0]) ?> 👋</h2>
     <p>Berikut ringkasan inventaris universitas hari ini, <?= date('d F Y') ?></p>
   </div>
-  <?php if (isAdmin()): ?>
+  <?php if (Auth::isAdmin()): ?>
   <div class="btn-group">
     <a href="<?= APP_URL ?>/modules/inventory/form.php" class="btn btn-primary">
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>
@@ -141,7 +148,7 @@ include __DIR__ . '/includes/header.php';
   </div>
   <?php endif; ?>
 
-  <?php if (isAdmin()): ?>
+  <?php if (Auth::isAdmin()): ?>
   <div class="stat-card">
     <div class="stat-icon purple">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
@@ -211,16 +218,16 @@ include __DIR__ . '/includes/header.php';
             <?php foreach ($recentTransactions as $t): ?>
             <tr data-href="<?= APP_URL ?>/modules/transactions/view.php?id=<?= $t['id'] ?>">
               <td>
-                <div class="table-item-name"><?= sanitize($t['item_name']) ?></div>
-                <div class="table-item-code"><?= sanitize($t['code']) ?></div>
+                <div class="table-item-name"><?= Format::escape($t['item_name']) ?></div>
+                <div class="table-item-code"><?= Format::escape($t['code']) ?></div>
               </td>
               <td><?php
-                $typeLabels = ['borrow'=>'Pinjam','return'=>'Kembali','transfer'=>'Transfer','dispose'=>'Buang'];
+                $typeLabels = ['borrow' => 'Pinjam', 'return' => 'Kembali', 'transfer' => 'Transfer', 'dispose' => 'Buang'];
                 echo "<span class='badge badge-secondary'>" . ($typeLabels[$t['type']] ?? $t['type']) . "</span>";
               ?></td>
-              <td style="font-size: 0.83rem;"><?= sanitize($t['borrower_name'] ?? $t['requested_by_name'] ?? '-') ?></td>
-              <td><?= statusBadge($t['status']) ?></td>
-              <td style="font-size: 0.75rem; color: var(--text-muted);"><?= formatDate($t['created_at'], 'd M') ?></td>
+              <td style="font-size: 0.83rem;"><?= Format::escape($t['borrower_name'] ?? $t['requested_by_name'] ?? '-') ?></td>
+              <td><?= Badge::status($t['status']) ?></td>
+              <td style="font-size: 0.75rem; color: var(--text-muted);"><?= Format::date($t['created_at'], 'd M') ?></td>
             </tr>
             <?php endforeach; ?>
           </tbody>
@@ -245,11 +252,11 @@ include __DIR__ . '/includes/header.php';
             <?php foreach ($overdueItems as $o): ?>
             <tr data-href="<?= APP_URL ?>/modules/transactions/view.php?id=<?= $o['id'] ?>">
               <td>
-                <div class="table-item-name"><?= sanitize($o['item_name']) ?></div>
-                <div class="table-item-code"><?= sanitize($o['item_code']) ?></div>
+                <div class="table-item-name"><?= Format::escape($o['item_name']) ?></div>
+                <div class="table-item-code"><?= Format::escape($o['item_code']) ?></div>
               </td>
-              <td style="font-size:0.83rem;"><?= sanitize($o['borrower_name'] ?? '-') ?></td>
-              <td style="font-size:0.83rem;color:var(--danger);"><?= formatDateTime($o['expected_return']) ?></td>
+              <td style="font-size:0.83rem;"><?= Format::escape($o['borrower_name'] ?? '-') ?></td>
+              <td style="font-size:0.83rem;color:var(--danger);"><?= Format::datetime($o['expected_return']) ?></td>
               <td>
                 <?php
                   $days = floor((time() - strtotime($o['expected_return'])) / 86400);
@@ -285,11 +292,11 @@ include __DIR__ . '/includes/header.php';
         ?>
         <div class="category-item" style="margin-bottom: 14px;">
           <div class="category-top">
-            <span class="category-name"><?= sanitize($cat['name']) ?></span>
+            <span class="category-name"><?= Format::escape($cat['name']) ?></span>
             <span class="category-count"><?= $cat['total'] ?> item</span>
           </div>
           <div class="category-bar">
-            <div class="category-bar-fill" style="width: <?= $pct ?>%; background: <?= sanitize($cat['color']) ?>;"></div>
+            <div class="category-bar-fill" style="width: <?= $pct ?>%; background: <?= Format::escape($cat['color']) ?>;"></div>
           </div>
         </div>
         <?php endforeach; endif; ?>
@@ -312,8 +319,8 @@ include __DIR__ . '/includes/header.php';
         <div class="activity-item">
           <div class="activity-dot <?= $m['priority'] === 'critical' ? 'red' : ($m['priority'] === 'high' ? 'amber' : ($m['status'] === 'completed' ? 'green' : 'blue')) ?>"></div>
           <div class="activity-content">
-            <div class="activity-title"><?= sanitize($m['title']) ?></div>
-            <div class="activity-meta"><?= sanitize($m['item_name']) ?> &bull; <?= statusBadge($m['status']) ?></div>
+            <div class="activity-title"><?= Format::escape($m['title']) ?></div>
+            <div class="activity-meta"><?= Format::escape($m['item_name']) ?> &bull; <?= Badge::status($m['status']) ?></div>
           </div>
         </div>
         <?php endforeach; endif; ?>
@@ -335,7 +342,7 @@ include __DIR__ . '/includes/header.php';
           <div class="activity-dot amber"></div>
           <div class="activity-content">
             <a href="<?= APP_URL ?>/modules/inventory/view.php?id=<?= $ls['id'] ?>" class="activity-title" style="color: var(--text-primary);">
-              <?= sanitize($ls['name']) ?>
+              <?= Format::escape($ls['name']) ?>
             </a>
             <div class="activity-meta">
               Tersedia: <strong style="color: var(--warning);"><?= $ls['quantity_available'] ?></strong> / <?= $ls['quantity'] ?> unit

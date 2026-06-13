@@ -1,22 +1,33 @@
 <?php
-require_once __DIR__ . '/../../includes/config.php';
-require_once __DIR__ . '/../../includes/auth.php';
+
+declare(strict_types=1);
+
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
+
+use App\Core\Auth;
+use App\Core\Database;
 
 header('Content-Type: application/json');
-if (!isLoggedIn()) { echo json_encode(['ok'=>false]); exit; }
 
-$me     = (int)$_SESSION['user_id'];
+if (!Auth::check()) {
+    echo json_encode(['ok' => false]);
+    exit;
+}
+
+$me     = Auth::id();
 $withId = (int)($_GET['with'] ?? 0);
-if (!$withId) { echo json_encode(['ok'=>false]); exit; }
 
-$db = getDB();
+if (!$withId) {
+    echo json_encode(['ok' => false]);
+    exit;
+}
 
-// Tandai sebagai terbaca
-$db->prepare("UPDATE messages SET is_read=1, read_at=NOW()
-              WHERE from_user_id=? AND to_user_id=? AND is_read=0")
-   ->execute([$withId, $me]);
+$pdo = Database::getInstance();
 
-$stmt = $db->prepare("
+$pdo->prepare("UPDATE messages SET is_read=1, read_at=NOW() WHERE from_user_id=? AND to_user_id=? AND is_read=0")
+    ->execute([$withId, $me]);
+
+$stmt = $pdo->prepare("
     SELECT m.id,
            m.from_user_id,
            m.message,
@@ -27,8 +38,8 @@ $stmt = $db->prepare("
        OR (m.from_user_id=:peer2 AND m.to_user_id=:me3)
     ORDER BY m.id DESC LIMIT 60
 ");
-$stmt->execute([':me'=>$me,':me2'=>$me,':me3'=>$me,':peer'=>$withId,':peer2'=>$withId]);
-$msgs = array_reverse($stmt->fetchAll(PDO::FETCH_ASSOC));
+$stmt->execute([':me' => $me, ':me2' => $me, ':me3' => $me, ':peer' => $withId, ':peer2' => $withId]);
+$msgs = array_reverse($stmt->fetchAll(\PDO::FETCH_ASSOC));
 
 $lastId = 0;
 foreach ($msgs as &$m) {
@@ -38,4 +49,4 @@ foreach ($msgs as &$m) {
     if ($m['id'] > $lastId) $lastId = $m['id'];
 }
 
-echo json_encode(['ok'=>true,'messages'=>$msgs,'last_id'=>$lastId]);
+echo json_encode(['ok' => true, 'messages' => $msgs, 'last_id' => $lastId]);

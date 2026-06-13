@@ -1,26 +1,33 @@
 <?php
-require_once __DIR__ . '/../../includes/config.php';
-require_once __DIR__ . '/../../includes/auth.php';
-require_once __DIR__ . '/../../includes/functions.php';
-requireLogin();
+declare(strict_types=1);
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
+
+use App\Core\Auth;
+use App\Core\Database;
+use App\Helpers\Format;
+use App\Helpers\Badge;
+use App\Helpers\Paginator;
+use App\Models\Setting;
+
+Auth::requireLogin();
 
 $pageTitle = 'Transaksi Peminjaman';
-$db = getDB();
+$pdo = Database::getInstance();
 
 $search  = trim($_GET['search'] ?? '');
 $status  = $_GET['status'] ?? '';
 $type    = $_GET['type'] ?? '';
 $itemId  = (int)($_GET['item_id'] ?? 0);
-$perPage = (int)getSetting('items_per_page', 15);
+$perPage = (int)Setting::get('items_per_page', 15);
 $page    = max(1, (int)($_GET['page'] ?? 1));
 $offset  = ($page - 1) * $perPage;
 
 $where = ['1=1']; $params = [];
 
 // Workers can only see their own transactions
-if (hasRole('worker')) {
+if (Auth::hasRole('worker')) {
     $where[] = 't.requested_by = ?';
-    $params[] = $_SESSION['user_id'];
+    $params[] = Auth::id();
 }
 
 if ($search) {
@@ -38,10 +45,10 @@ if ($itemId)  { $where[] = 't.item_id = ?';   $params[] = $itemId; }
 
 $whereStr = implode(' AND ', $where);
 
-$cStmt = $db->prepare("SELECT COUNT(*) FROM transactions t JOIN items i ON t.item_id = i.id WHERE $whereStr");
+$cStmt = $pdo->prepare("SELECT COUNT(*) FROM transactions t JOIN items i ON t.item_id = i.id WHERE $whereStr");
 $cStmt->execute($params); $total = (int)$cStmt->fetchColumn();
 
-$stmt = $db->prepare("
+$stmt = $pdo->prepare("
     SELECT t.*, i.name as item_name, i.code as item_code,
            u.full_name as requested_by_name, a.full_name as approved_by_name
     FROM transactions t
@@ -55,7 +62,7 @@ $stmt = $db->prepare("
 $stmt->execute(array_merge($params, [$perPage, $offset]));
 $transactions = $stmt->fetchAll();
 
-include __DIR__ . '/../../includes/header.php';
+include dirname(__DIR__, 2) . '/includes/header.php';
 ?>
 
 <div class="page-header">
@@ -74,20 +81,25 @@ include __DIR__ . '/../../includes/header.php';
 <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;">
   <?php
   $tabs = [
-    [''        ,'Semua'],
-    ['pending' ,'Menunggu'],
-    ['active'  ,'Aktif Dipinjam'],
-    ['overdue' ,'Terlambat'],
-    ['returned','Dikembalikan'],
-    ['rejected','Ditolak'],
+    [''                 , 'Semua'],
+    ['pending'          , 'Menunggu'],
+    ['active'           , 'Aktif Dipinjam'],
+    ['overdue'          , 'Terlambat'],
+    ['return_requested' , 'Pengajuan Kembali'],
+    ['returned'         , 'Dikembalikan'],
+    ['rejected'         , 'Ditolak'],
   ];
   foreach ($tabs as [$val, $lbl]):
     $isActive = $status === $val;
     $count = '';
-    if ($val === 'pending') { $pStmt = $db->query("SELECT COUNT(*) FROM transactions WHERE status='pending'"); $count = ' (' . $pStmt->fetchColumn() . ')'; }
+    if ($val === 'pending') { $pStmt = $pdo->query("SELECT COUNT(*) FROM transactions WHERE status='pending'"); $count = ' (' . $pStmt->fetchColumn() . ')'; }
     if ($val === 'overdue') {
-      $oStmt = $db->query("SELECT COUNT(*) FROM transactions WHERE type='borrow' AND status='active' AND expected_return < NOW()");
+      $oStmt = $pdo->query("SELECT COUNT(*) FROM transactions WHERE type='borrow' AND status='active' AND expected_return < NOW()");
       $count = ' (' . $oStmt->fetchColumn() . ')';
+    }
+    if ($val === 'return_requested') {
+      $rStmt = $pdo->query("SELECT COUNT(*) FROM transactions WHERE status='return_requested'");
+      $count = ' (' . $rStmt->fetchColumn() . ')';
     }
   ?>
   <a href="?status=<?= $val ?><?= $search ? '&search='.urlencode($search) : '' ?>"
@@ -100,10 +112,10 @@ include __DIR__ . '/../../includes/header.php';
 <div class="card">
   <div class="table-toolbar">
     <form method="GET" style="display:contents;">
-      <input type="hidden" name="status" value="<?= sanitize($status) ?>">
+      <input type="hidden" name="status" value="<?= Format::escape($status) ?>">
       <div class="search-box">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        <input type="text" name="search" value="<?= sanitize($search) ?>" placeholder="Cari kode, barang, peminjam...">
+        <input type="text" name="search" value="<?= Format::escape($search) ?>" placeholder="Cari kode, barang, peminjam...">
       </div>
       <select name="type" class="filter-select" onchange="this.form.submit()">
         <option value="">Semua Tipe</option>
@@ -131,48 +143,67 @@ include __DIR__ . '/../../includes/header.php';
         ?>
         <tr data-href="view.php?id=<?= $tx['id'] ?>" style="<?= $isOverdue ? 'background: rgba(239,68,68,0.04)' : '' ?>">
           <td>
-            <div class="table-item-name"><?= sanitize($tx['item_name']) ?></div>
-            <div class="table-item-code"><?= sanitize($tx['code']) ?> &bull; <?= sanitize($tx['item_code']) ?></div>
+            <div class="table-item-name"><?= Format::escape($tx['item_name']) ?></div>
+            <div class="table-item-code"><?= Format::escape($tx['code']) ?> &bull; <?= Format::escape($tx['item_code']) ?></div>
           </td>
           <td><?php $tl=['borrow'=>'Pinjam','return'=>'Kembali','transfer'=>'Transfer','dispose'=>'Buang']; echo "<span class='badge badge-secondary'>".($tl[$tx['type']]??$tx['type'])."</span>"; ?></td>
           <td class="td-meta"><?= $tx['quantity'] ?> unit</td>
           <td>
-            <div><?= sanitize($tx['borrower_name'] ?: ($tx['requested_by_name'] ?: '-')) ?></div>
-            <?php if ($tx['borrower_department']): ?><div class="table-item-sub"><?= sanitize($tx['borrower_department']) ?></div><?php endif; ?>
+            <div><?= Format::escape($tx['borrower_name'] ?: ($tx['requested_by_name'] ?: '-')) ?></div>
+            <?php if ($tx['borrower_department']): ?><div class="table-item-sub"><?= Format::escape($tx['borrower_department']) ?></div><?php endif; ?>
           </td>
-          <td class="td-meta"><?= formatDate($tx['borrow_date'] ?: $tx['created_at'], 'd M Y') ?></td>
+          <td class="td-meta"><?= Format::date($tx['borrow_date'] ?: $tx['created_at'], 'd M Y') ?></td>
           <td>
             <?php if ($tx['expected_return']): ?>
             <span style="<?= $isOverdue ? 'color:var(--danger);font-weight:600;' : 'color:var(--text-muted);' ?>">
-              <?= formatDate($tx['expected_return'], 'd M Y') ?>
+              <?= Format::date($tx['expected_return'], 'd M Y') ?>
               <?php if ($isOverdue): ?><br><span class="table-item-code" style="color:var(--danger);">Terlambat <?= floor((time()-strtotime($tx['expected_return']))/86400) ?> hari</span><?php endif; ?>
             </span>
             <?php else: ?>-<?php endif; ?>
           </td>
-          <td><?= statusBadge($isOverdue ? 'overdue' : $tx['status']) ?></td>
+          <td><?= Badge::status($isOverdue ? 'overdue' : $tx['status']) ?></td>
           <td style="text-align:right;" onclick="event.stopPropagation()">
             <div class="btn-group" style="justify-content:flex-end;">
               <a href="view.php?id=<?= $tx['id'] ?>" class="btn btn-ghost btn-icon btn-sm" title="Detail">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
               </a>
-              <?php if (isAdmin() && $tx['status'] === 'pending'): ?>
+              <?php if (Auth::isAdmin() && $tx['status'] === 'pending'): ?>
               <form method="POST" action="approve.php" style="display:inline;">
                 <input type="hidden" name="id" value="<?= $tx['id'] ?>"><input type="hidden" name="action" value="approve">
-                <button type="submit" class="btn btn-ghost btn-icon btn-sm" style="color:var(--success);" title="Setujui">
+                <button type="submit" class="btn btn-ghost btn-icon btn-sm" style="color:var(--success);" title="Setujui Peminjaman">
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                 </button>
               </form>
               <form method="POST" action="approve.php" style="display:inline;">
                 <input type="hidden" name="id" value="<?= $tx['id'] ?>"><input type="hidden" name="action" value="reject">
-                <button type="submit" class="btn btn-ghost btn-icon btn-sm" style="color:var(--danger);" title="Tolak">
+                <button type="submit" class="btn btn-ghost btn-icon btn-sm" style="color:var(--danger);" title="Tolak Peminjaman">
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                 </button>
               </form>
               <?php endif; ?>
-              <?php if (isAdmin() && ($tx['status'] === 'active' || $isOverdue)): ?>
-              <a href="return.php?id=<?= $tx['id'] ?>" class="btn btn-ghost btn-icon btn-sm" style="color:var(--info);" title="Proses Pengembalian">
+              <?php if (Auth::isAdmin() && ($tx['status'] === 'active' || $isOverdue)): ?>
+              <a href="return.php?id=<?= $tx['id'] ?>" class="btn btn-ghost btn-icon btn-sm" style="color:var(--info);" title="Proses Pengembalian Langsung">
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg>
               </a>
+              <?php endif; ?>
+              <?php if (Auth::hasRole('worker') && $tx['status'] === 'active' && $tx['requested_by'] == Auth::id()): ?>
+              <a href="request_return.php?id=<?= $tx['id'] ?>" class="btn btn-ghost btn-icon btn-sm" style="color:var(--info);" title="Ajukan Pengembalian">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg>
+              </a>
+              <?php endif; ?>
+              <?php if (Auth::isAdmin() && $tx['status'] === 'return_requested'): ?>
+              <form method="POST" action="approve.php" style="display:inline;" onsubmit="return confirm('Setujui pengajuan pengembalian ini?')">
+                <input type="hidden" name="id" value="<?= $tx['id'] ?>"><input type="hidden" name="action" value="return_approve">
+                <button type="submit" class="btn btn-ghost btn-icon btn-sm" style="color:var(--success);" title="Setujui Pengembalian">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                </button>
+              </form>
+              <form method="POST" action="approve.php" style="display:inline;" onsubmit="return confirm('Tolak pengajuan pengembalian? Status akan kembali aktif.')">
+                <input type="hidden" name="id" value="<?= $tx['id'] ?>"><input type="hidden" name="action" value="return_reject">
+                <button type="submit" class="btn btn-ghost btn-icon btn-sm" style="color:var(--danger);" title="Tolak Pengajuan Kembali">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                </button>
+              </form>
               <?php endif; ?>
             </div>
           </td>
@@ -182,7 +213,7 @@ include __DIR__ . '/../../includes/header.php';
     </table>
     <?php endif; ?>
   </div>
-  <?= paginate($total, $perPage, $page, '?'.http_build_query(array_filter(['search'=>$search,'status'=>$status,'type'=>$type]))) ?>
+  <?= Paginator::render($total, $perPage, $page, '?'.http_build_query(array_filter(['search'=>$search,'status'=>$status,'type'=>$type]))) ?>
 </div>
 
-<?php include __DIR__ . '/../../includes/footer.php'; ?>
+<?php include dirname(__DIR__, 2) . '/includes/footer.php'; ?>

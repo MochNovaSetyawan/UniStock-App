@@ -1,18 +1,31 @@
 <?php
-require_once __DIR__ . '/../../includes/config.php';
-require_once __DIR__ . '/../../includes/auth.php';
-require_once __DIR__ . '/../../includes/functions.php';
-requireRole('superadmin');
 
-$db = getDB();
-$id = (int)($_GET['id'] ?? 0);
-$user = null; $isEdit = false;
+declare(strict_types=1);
+
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
+
+use App\Core\Auth;
+use App\Core\Database;
+use App\Core\Session;
+use App\Helpers\Format;
+use App\Services\AuditService;
+
+Auth::requireRole('superadmin');
+
+$pdo    = Database::getInstance();
+$id     = (int)($_GET['id'] ?? 0);
+$user   = null;
+$isEdit = false;
 
 if ($id) {
-    $stmt = $db->prepare("SELECT * FROM users WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
     $stmt->execute([$id]);
     $user = $stmt->fetch();
-    if (!$user) { flashMessage('error', 'User tidak ditemukan.'); header('Location: index.php'); exit; }
+    if (!$user) {
+        Session::flash('error', 'User tidak ditemukan.');
+        header('Location: index.php');
+        exit;
+    }
     $isEdit = true;
 }
 
@@ -29,45 +42,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'department' => trim($_POST['department'] ?? ''),
         'is_active'  => isset($_POST['is_active']) ? 1 : 0,
     ];
-    $password = $_POST['password'] ?? '';
+    $password    = $_POST['password'] ?? '';
     $passConfirm = $_POST['password_confirm'] ?? '';
 
-    if (!$data['full_name']) $errors[] = 'Nama lengkap wajib diisi.';
-    if (!$data['username'])  $errors[] = 'Username wajib diisi.';
-    if (!$data['email'])     $errors[] = 'Email wajib diisi.';
+    if (!$data['full_name'])  $errors[] = 'Nama lengkap wajib diisi.';
+    if (!$data['username'])   $errors[] = 'Username wajib diisi.';
+    if (!$data['email'])      $errors[] = 'Email wajib diisi.';
     if (!filter_var($data['email'], FILTER_VALIDATE_EMAIL)) $errors[] = 'Format email tidak valid.';
-
-    if (!$isEdit && !$password) $errors[] = 'Password wajib diisi untuk user baru.';
+    if (!$isEdit && !$password)  $errors[] = 'Password wajib diisi untuk user baru.';
     if ($password && $password !== $passConfirm) $errors[] = 'Konfirmasi password tidak cocok.';
-    if ($password && strlen($password) < 6) $errors[] = 'Password minimal 6 karakter.';
+    if ($password && strlen($password) < 6)      $errors[] = 'Password minimal 6 karakter.';
 
-    // Check unique
-    $uCheck = $db->prepare("SELECT id FROM users WHERE username = ? AND id != ?"); $uCheck->execute([$data['username'], $id]);
+    $uCheck = $pdo->prepare("SELECT id FROM users WHERE username = ? AND id != ?");
+    $uCheck->execute([$data['username'], $id]);
     if ($uCheck->fetch()) $errors[] = 'Username sudah digunakan.';
-    $eCheck = $db->prepare("SELECT id FROM users WHERE email = ? AND id != ?"); $eCheck->execute([$data['email'], $id]);
+
+    $eCheck = $pdo->prepare("SELECT id FROM users WHERE email = ? AND id != ?");
+    $eCheck->execute([$data['email'], $id]);
     if ($eCheck->fetch()) $errors[] = 'Email sudah digunakan.';
 
     if (empty($errors)) {
-        if ($password) $data['password'] = password_hash($password, PASSWORD_BCRYPT);
+        if ($password) {
+            $data['password'] = password_hash($password, PASSWORD_BCRYPT);
+        }
 
         if ($isEdit) {
-            $setCols = array_keys($data);
-            $sql = "UPDATE users SET " . implode(', ', array_map(fn($k) => "`$k` = ?", $setCols)) . " WHERE id = ?";
-            $db->prepare($sql)->execute(array_merge(array_values($data), [$id]));
-            auditLog('UPDATE', 'users', $id, 'User updated: ' . $data['username']);
-            flashMessage('success', 'User berhasil diperbarui.');
+            $sql = "UPDATE users SET " . implode(', ', array_map(fn($k) => "`$k` = ?", array_keys($data))) . " WHERE id = ?";
+            $pdo->prepare($sql)->execute(array_merge(array_values($data), [$id]));
+            AuditService::log('UPDATE', 'users', $id, 'User updated: ' . $data['username']);
+            Session::flash('success', 'User berhasil diperbarui.');
         } else {
-            $setCols = array_keys($data);
-            $sql = "INSERT INTO users (" . implode(', ', array_map(fn($k) => "`$k`", $setCols)) . ") VALUES (" . implode(', ', array_fill(0, count($data), '?')) . ")";
-            $db->prepare($sql)->execute(array_values($data));
-            auditLog('CREATE', 'users', $db->lastInsertId(), 'User created: ' . $data['username']);
-            flashMessage('success', 'User berhasil ditambahkan.');
+            $sql = "INSERT INTO users (" . implode(', ', array_map(fn($k) => "`$k`", array_keys($data))) . ") VALUES (" . implode(', ', array_fill(0, count($data), '?')) . ")";
+            $pdo->prepare($sql)->execute(array_values($data));
+            AuditService::log('CREATE', 'users', (int)$pdo->lastInsertId(), 'User created: ' . $data['username']);
+            Session::flash('success', 'User berhasil ditambahkan.');
         }
-        header('Location: index.php'); exit;
+        header('Location: index.php');
+        exit;
     }
 }
 
-include __DIR__ . '/../../includes/header.php';
+include dirname(__DIR__, 2) . '/includes/header.php';
 ?>
 
 <div class="page-header">
@@ -86,7 +101,7 @@ include __DIR__ . '/../../includes/header.php';
 <?php if (!empty($errors)): ?>
 <div class="alert alert-danger mb-20">
   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="18" height="18"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-  <div><ul style="margin:4px 0 0 16px;"><?php foreach($errors as $e): ?><li><?= sanitize($e) ?></li><?php endforeach; ?></ul></div>
+  <div><ul style="margin:4px 0 0 16px;"><?php foreach ($errors as $e): ?><li><?= Format::escape($e) ?></li><?php endforeach; ?></ul></div>
 </div>
 <?php endif; ?>
 
@@ -97,19 +112,19 @@ include __DIR__ . '/../../includes/header.php';
       <div class="form-grid">
         <div class="form-group full">
           <label class="form-label">Nama Lengkap <span class="required">*</span></label>
-          <input type="text" name="full_name" class="form-control" required value="<?= sanitize($user['full_name'] ?? ($_POST['full_name'] ?? '')) ?>" placeholder="Nama lengkap pengguna">
+          <input type="text" name="full_name" class="form-control" required value="<?= Format::escape($user['full_name'] ?? ($_POST['full_name'] ?? '')) ?>" placeholder="Nama lengkap pengguna">
         </div>
         <div class="form-group">
           <label class="form-label">Username <span class="required">*</span></label>
-          <input type="text" name="username" class="form-control" required value="<?= sanitize($user['username'] ?? ($_POST['username'] ?? '')) ?>" placeholder="username_unik" style="text-transform:lowercase;">
+          <input type="text" name="username" class="form-control" required value="<?= Format::escape($user['username'] ?? ($_POST['username'] ?? '')) ?>" placeholder="username_unik" style="text-transform:lowercase;">
         </div>
         <div class="form-group">
           <label class="form-label">Email <span class="required">*</span></label>
-          <input type="email" name="email" class="form-control" required value="<?= sanitize($user['email'] ?? ($_POST['email'] ?? '')) ?>" placeholder="email@universitas.ac.id">
+          <input type="email" name="email" class="form-control" required value="<?= Format::escape($user['email'] ?? ($_POST['email'] ?? '')) ?>" placeholder="email@universitas.ac.id">
         </div>
         <div class="form-group">
           <label class="form-label">No. Telepon</label>
-          <input type="text" name="phone" class="form-control" value="<?= sanitize($user['phone'] ?? '') ?>" placeholder="08xx-xxxx-xxxx">
+          <input type="text" name="phone" class="form-control" value="<?= Format::escape($user['phone'] ?? '') ?>" placeholder="08xx-xxxx-xxxx">
         </div>
         <div class="form-group">
           <label class="form-label">Role <span class="required">*</span></label>
@@ -121,7 +136,7 @@ include __DIR__ . '/../../includes/header.php';
         </div>
         <div class="form-group">
           <label class="form-label">Departemen / Fakultas</label>
-          <input type="text" name="department" class="form-control" value="<?= sanitize($user['department'] ?? '') ?>" placeholder="Fakultas Teknik, IT Department...">
+          <input type="text" name="department" class="form-control" value="<?= Format::escape($user['department'] ?? '') ?>" placeholder="Fakultas Teknik, IT Department...">
         </div>
         <div class="form-group">
           <label class="form-label">Password <?= $isEdit ? '' : '<span class="required">*</span>' ?></label>
@@ -149,4 +164,4 @@ include __DIR__ . '/../../includes/header.php';
   </div>
 </form>
 
-<?php include __DIR__ . '/../../includes/footer.php'; ?>
+<?php include dirname(__DIR__, 2) . '/includes/footer.php'; ?>

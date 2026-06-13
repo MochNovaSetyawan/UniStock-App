@@ -1,13 +1,20 @@
 <?php
-require_once __DIR__ . '/../../includes/config.php';
-require_once __DIR__ . '/../../includes/auth.php';
-require_once __DIR__ . '/../../includes/functions.php';
-requireRole('superadmin', 'admin');
+declare(strict_types=1);
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
 
-$db = getDB();
+use App\Core\Auth;
+use App\Core\Database;
+use App\Core\Session;
+use App\Helpers\Format;
+use App\Models\Item;
+use App\Services\AuditService;
+
+Auth::requireRole('superadmin', 'admin');
+
+$pdo = Database::getInstance();
 
 // Load semua barang aktif untuk dropdown
-$allItems = $db->query("
+$allItems = $pdo->query("
     SELECT i.id, i.name, i.code, i.quantity, i.condition, i.location_id,
            i.purchase_price, i.category_id, i.supplier, i.warranty_expiry,
            c.name as cat_name, c.code as cat_code,
@@ -21,7 +28,7 @@ $allItems = $db->query("
     ORDER BY i.name
 ")->fetchAll();
 
-$locations = $db->query("SELECT id, name FROM locations ORDER BY name")->fetchAll();
+$locations = $pdo->query("SELECT id, name FROM locations ORDER BY name")->fetchAll();
 
 // ── Handle POST ───────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -36,58 +43,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $warrantyExpiry= $_POST['warranty_expiry']?: null;
 
     if (!$itemId) {
-        flashMessage('error', 'Pilih barang terlebih dahulu.');
+        Session::flash('error', 'Pilih barang terlebih dahulu.');
         header('Location: restock.php'); exit;
     }
 
-    $stmt = $db->prepare("SELECT * FROM items WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT * FROM items WHERE id = ?");
     $stmt->execute([$itemId]);
     $item = $stmt->fetch();
     if (!$item) {
-        flashMessage('error', 'Barang tidak ditemukan.');
+        Session::flash('error', 'Barang tidak ditemukan.');
         header('Location: restock.php'); exit;
     }
 
-    $db->beginTransaction();
+    $pdo->beginTransaction();
     try {
-        $currentMax = (int)$db->query("SELECT MAX(unit_number) FROM item_units WHERE item_id = {$itemId}")->fetchColumn();
+        $currentMax = (int)$pdo->query("SELECT MAX(unit_number) FROM item_units WHERE item_id = {$itemId}")->fetchColumn();
         $newTotal   = $currentMax + $addQty;
 
-        generateMissingUnits($db, $itemId, $item['code'], $item['category_id'], $newTotal, $condition, $locationId);
+        (new Item())->generateUnits($itemId, $item['code'], $item['category_id'], $newTotal, $condition, $locationId);
 
         // Set acquired_date, purchase_price, supplier pada unit yang baru dibuat
-        $db->prepare("
+        $pdo->prepare("
             UPDATE item_units
             SET acquired_date = ?, purchase_price = ?, supplier = ?
             WHERE item_id = ? AND unit_number > ? AND unit_number <= ?
         ")->execute([$acquiredDate, $price, $supplier ?: null, $itemId, $currentMax, $newTotal]);
 
         // Update items.quantity
-        $db->prepare("UPDATE items SET quantity = ?, updated_at = NOW() WHERE id = ?")->execute([$newTotal, $itemId]);
+        $pdo->prepare("UPDATE items SET quantity = ?, updated_at = NOW() WHERE id = ?")->execute([$newTotal, $itemId]);
 
         // Update warranty jika diisi
         if ($warrantyExpiry) {
-            $db->prepare("UPDATE items SET warranty_expiry = COALESCE(?, warranty_expiry), updated_at = NOW() WHERE id = ?")
+            $pdo->prepare("UPDATE items SET warranty_expiry = COALESCE(?, warranty_expiry), updated_at = NOW() WHERE id = ?")
                ->execute([$warrantyExpiry, $itemId]);
         }
 
-        syncItemAvailability($db, $itemId);
-        $db->commit();
+        (new Item())->syncAvailability($itemId);
+        $pdo->commit();
 
-        auditLog('UPDATE', 'inventory', $itemId, "Restock +{$addQty} unit ke {$item['name']}");
-        flashMessage('success', "{$addQty} unit berhasil ditambahkan ke \"{$item['name']}\". Total sekarang: {$newTotal} unit.");
+        AuditService::log('UPDATE', 'inventory', $itemId, "Restock +{$addQty} unit ke {$item['name']}");
+        Session::flash('success', "{$addQty} unit berhasil ditambahkan ke \"{$item['name']}\". Total sekarang: {$newTotal} unit.");
         header('Location: index.php'); exit;
 
     } catch (\Exception $e) {
-        $db->rollBack();
-        flashMessage('error', 'Gagal menambah unit: ' . $e->getMessage());
+        $pdo->rollBack();
+        Session::flash('error', 'Gagal menambah unit: ' . $e->getMessage());
         header('Location: restock.php'); exit;
     }
 }
 
 $pageTitle = 'Tambah Unit';
 $itemsJson = json_encode(array_column($allItems, null, 'id'));
-include __DIR__ . '/../../includes/header.php';
+include dirname(__DIR__, 2) . '/includes/header.php';
 ?>
 
 <div class="page-header">
@@ -117,7 +124,7 @@ include __DIR__ . '/../../includes/header.php';
             <select name="item_id" id="itemSelect" class="form-control" required onchange="onItemChange(this.value)">
               <option value="">— Cari atau pilih barang —</option>
               <?php foreach ($allItems as $it): ?>
-              <option value="<?= $it['id'] ?>"><?= sanitize($it['name']) ?> — <?= sanitize($it['code']) ?></option>
+              <option value="<?= $it['id'] ?>"><?= Format::escape($it['name']) ?> — <?= Format::escape($it['code']) ?></option>
               <?php endforeach; ?>
             </select>
           </div>
@@ -186,7 +193,7 @@ include __DIR__ . '/../../includes/header.php';
               <select name="location_id" id="locationSelect" class="form-control">
                 <option value="">— Ikut barang —</option>
                 <?php foreach ($locations as $loc): ?>
-                <option value="<?= $loc['id'] ?>"><?= sanitize($loc['name']) ?></option>
+                <option value="<?= $loc['id'] ?>"><?= Format::escape($loc['name']) ?></option>
                 <?php endforeach; ?>
               </select>
             </div>
@@ -284,4 +291,4 @@ function updateAfter() {
 }
 </script>
 
-<?php include __DIR__ . '/../../includes/footer.php'; ?>
+<?php include dirname(__DIR__, 2) . '/includes/footer.php'; ?>

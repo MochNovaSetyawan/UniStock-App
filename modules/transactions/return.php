@@ -1,20 +1,27 @@
 <?php
-require_once __DIR__ . '/../../includes/config.php';
-require_once __DIR__ . '/../../includes/auth.php';
-require_once __DIR__ . '/../../includes/functions.php';
-requireRole('superadmin', 'admin');
+declare(strict_types=1);
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
 
-$db = getDB();
+use App\Core\Auth;
+use App\Core\Database;
+use App\Core\Session;
+use App\Helpers\Format;
+use App\Models\Item;
+use App\Services\AuditService;
+
+Auth::requireRole('superadmin', 'admin');
+
+$pdo = Database::getInstance();
 $id = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
-$stmt = $db->prepare("SELECT t.*, i.name as item_name, i.code as item_code FROM transactions t JOIN items i ON t.item_id=i.id WHERE t.id=?");
+$stmt = $pdo->prepare("SELECT t.*, i.name as item_name, i.code as item_code FROM transactions t JOIN items i ON t.item_id=i.id WHERE t.id=?");
 $stmt->execute([$id]);
 $tx = $stmt->fetch();
 if (!$tx || !in_array($tx['status'], ['active', 'approved'])) {
-    flashMessage('error', 'Transaksi tidak dapat diproses pengembalian.'); header('Location: index.php'); exit;
+    Session::flash('error', 'Transaksi tidak dapat diproses pengembalian.'); header('Location: index.php'); exit;
 }
 
 // Load linked units
-$unitStmt = $db->prepare("
+$unitStmt = $pdo->prepare("
     SELECT tu.id as tu_id, tu.unit_id, iu.full_code, iu.unit_code, iu.serial_number,
            iu.condition as current_condition, iu.status as current_status,
            l.name as loc_name
@@ -25,7 +32,7 @@ $unitStmt = $db->prepare("
     ORDER BY iu.unit_number ASC
 ");
 $unitStmt->execute([$id]);
-$txUnits = $unitStmt->fetchAll(PDO::FETCH_ASSOC);
+$txUnits = $unitStmt->fetchAll(\PDO::FETCH_ASSOC);
 $hasUnits = !empty($txUnits);
 
 $errors = [];
@@ -46,16 +53,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        $db->beginTransaction();
+        $pdo->beginTransaction();
         try {
             // Update transaction
-            $db->prepare("
+            $pdo->prepare("
                 UPDATE transactions SET status='returned', actual_return=NOW(),
                     return_condition=?, return_notes=?, returned_by=? WHERE id=?
-            ")->execute([$overallCondition, $notes, $_SESSION['user_id'], $id]);
+            ")->execute([$overallCondition, $notes, Auth::id(), $id]);
 
-            $updUnit = $db->prepare("UPDATE item_units SET status=?, `condition`=? WHERE id=?");
-            $updTu   = $db->prepare("UPDATE transaction_units SET return_condition=?, return_notes=? WHERE transaction_id=? AND unit_id=?");
+            $updUnit = $pdo->prepare("UPDATE item_units SET status=?, `condition`=? WHERE id=?");
+            $updTu   = $pdo->prepare("UPDATE transaction_units SET return_condition=?, return_notes=? WHERE transaction_id=? AND unit_id=?");
 
             foreach ($txUnits as $u) {
                 $cond   = $unitConditions[$u['unit_id']] ?? 'good';
@@ -66,32 +73,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $updTu->execute([$cond, $unote ?: null, $id, $u['unit_id']]);
             }
 
-            syncItemAvailability($db, $tx['item_id']);
-            $db->commit();
+            (new Item())->syncAvailability($tx['item_id']);
+            $pdo->commit();
 
-            auditLog('UPDATE', 'transactions', $id, 'Item returned (unit system)');
-            flashMessage('success', 'Pengembalian barang berhasil dicatat.');
+            AuditService::log('UPDATE', 'transactions', $id, 'Item returned (unit system)');
+            Session::flash('success', 'Pengembalian barang berhasil dicatat.');
             header('Location: index.php'); exit;
         } catch (Exception $e) {
-            $db->rollBack();
+            $pdo->rollBack();
             $errors[] = 'Gagal memproses pengembalian: ' . $e->getMessage();
         }
     } else {
         // Legacy: single condition
         $condition = $_POST['return_condition'] ?? 'good';
-        $db->prepare("
+        $pdo->prepare("
             UPDATE transactions SET status='returned', actual_return=NOW(), return_condition=?, return_notes=?, returned_by=? WHERE id=?
-        ")->execute([$condition, $notes, $_SESSION['user_id'], $id]);
-        $db->prepare("UPDATE items SET quantity_available=quantity_available+?, `condition`=? WHERE id=?")->execute([$tx['quantity'], $condition, $tx['item_id']]);
+        ")->execute([$condition, $notes, Auth::id(), $id]);
+        $pdo->prepare("UPDATE items SET quantity_available=quantity_available+?, `condition`=? WHERE id=?")->execute([$tx['quantity'], $condition, $tx['item_id']]);
 
-        auditLog('UPDATE', 'transactions', $id, 'Item returned');
-        flashMessage('success', 'Pengembalian barang berhasil dicatat.');
+        AuditService::log('UPDATE', 'transactions', $id, 'Item returned');
+        Session::flash('success', 'Pengembalian barang berhasil dicatat.');
         header('Location: index.php'); exit;
     }
 }
 
 $pageTitle = 'Pengembalian Barang';
-include __DIR__ . '/../../includes/header.php';
+include dirname(__DIR__, 2) . '/includes/header.php';
 ?>
 
 <div class="page-header">
@@ -102,7 +109,7 @@ include __DIR__ . '/../../includes/header.php';
 </div>
 
 <?php if ($errors): ?>
-<div class="alert alert-danger mb-20"><?= implode('<br>', array_map('sanitize', $errors)) ?></div>
+<div class="alert alert-danger mb-20"><?= implode('<br>', array_map([Format::class, 'escape'], $errors)) ?></div>
 <?php endif; ?>
 
 <div style="max-width:<?= $hasUnits ? '800px' : '600px' ?>;">
@@ -110,15 +117,15 @@ include __DIR__ . '/../../includes/header.php';
     <div class="card-header"><div class="card-title">Info Peminjaman</div></div>
     <div class="card-body">
       <div class="detail-grid">
-        <div class="detail-field"><label>Kode Transaksi</label><span class="mono"><?= sanitize($tx['code']) ?></span></div>
-        <div class="detail-field"><label>Barang</label><span><?= sanitize($tx['item_name']) ?></span></div>
+        <div class="detail-field"><label>Kode Transaksi</label><span class="mono"><?= Format::escape($tx['code']) ?></span></div>
+        <div class="detail-field"><label>Barang</label><span><?= Format::escape($tx['item_name']) ?></span></div>
         <div class="detail-field"><label>Jumlah</label><span><?= $tx['quantity'] ?> unit</span></div>
-        <div class="detail-field"><label>Peminjam</label><span><?= sanitize($tx['borrower_name']) ?></span></div>
-        <div class="detail-field"><label>Tgl Pinjam</label><span><?= formatDateTime($tx['borrow_date']) ?></span></div>
+        <div class="detail-field"><label>Peminjam</label><span><?= Format::escape($tx['borrower_name']) ?></span></div>
+        <div class="detail-field"><label>Tgl Pinjam</label><span><?= Format::datetime($tx['borrow_date']) ?></span></div>
         <div class="detail-field">
           <label>Batas Kembali</label>
           <span style="<?= $tx['expected_return'] < date('Y-m-d H:i:s') ? 'color:var(--danger);font-weight:600;' : '' ?>">
-            <?= formatDateTime($tx['expected_return']) ?>
+            <?= Format::datetime($tx['expected_return']) ?>
             <?php if ($tx['expected_return'] < date('Y-m-d H:i:s')): ?>
             <span class="badge badge-danger" style="margin-left:6px;">Terlambat</span>
             <?php endif; ?>
@@ -152,12 +159,12 @@ include __DIR__ . '/../../includes/header.php';
           <div class="unit-return-row" style="padding:14px 20px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:1fr 180px;gap:14px;align-items:start;">
             <div>
               <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-                <span class="mono" style="font-size:0.88rem;color:var(--accent);font-weight:600;"><?= sanitize($u['full_code']) ?></span>
+                <span class="mono" style="font-size:0.88rem;color:var(--accent);font-weight:600;"><?= Format::escape($u['full_code']) ?></span>
                 <?php if ($u['serial_number']): ?>
-                <span style="font-size:0.75rem;color:var(--text-muted);">S/N: <?= sanitize($u['serial_number']) ?></span>
+                <span style="font-size:0.75rem;color:var(--text-muted);">S/N: <?= Format::escape($u['serial_number']) ?></span>
                 <?php endif; ?>
                 <?php if ($u['loc_name']): ?>
-                <span style="font-size:0.75rem;color:var(--text-muted);"><?= sanitize($u['loc_name']) ?></span>
+                <span style="font-size:0.75rem;color:var(--text-muted);"><?= Format::escape($u['loc_name']) ?></span>
                 <?php endif; ?>
               </div>
               <textarea name="unit_notes[<?= $u['unit_id'] ?>]" class="form-control" rows="1"
@@ -229,4 +236,4 @@ document.querySelectorAll('.unit-condition-select').forEach(function(sel) {
 });
 </script>
 
-<?php include __DIR__ . '/../../includes/footer.php'; ?>
+<?php include dirname(__DIR__, 2) . '/includes/footer.php'; ?>

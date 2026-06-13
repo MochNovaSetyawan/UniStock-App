@@ -1,15 +1,23 @@
 <?php
-require_once __DIR__ . '/../../includes/config.php';
-require_once __DIR__ . '/../../includes/auth.php';
-require_once __DIR__ . '/../../includes/functions.php';
-requireLogin();
+
+declare(strict_types=1);
+
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
+
+use App\Core\Auth;
+use App\Core\Database;
+use App\Core\Session;
+use App\Helpers\Format;
+use App\Services\AuditService;
+
+Auth::requireLogin();
 
 $pageTitle = 'Lokasi';
-$db = getDB();
+$pdo = Database::getInstance();
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isAdmin()) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && Auth::isAdmin()) {
     $action = $_POST['action'] ?? '';
-    $id = (int)($_POST['id'] ?? 0);
+    $id     = (int)($_POST['id'] ?? 0);
 
     if ($action === 'save') {
         $data = [
@@ -22,57 +30,71 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isAdmin()) {
             'pic_name'    => trim($_POST['pic_name'] ?? ''),
             'pic_phone'   => trim($_POST['pic_phone'] ?? ''),
         ];
-        if (!$data['name'] || !$data['code']) { flashMessage('error', 'Nama dan kode wajib diisi.'); }
-        else {
+        if (!$data['name'] || !$data['code']) {
+            Session::flash('error', 'Nama dan kode wajib diisi.');
+        } else {
             if ($id) {
                 $sets = implode(',', array_map(fn($k) => "`$k`=?", array_keys($data)));
-                $db->prepare("UPDATE locations SET $sets WHERE id=?")->execute(array_merge(array_values($data), [$id]));
-                auditLog('UPDATE','locations',$id,'Location updated: '.$data['name']);
-                flashMessage('success','Lokasi berhasil diperbarui.');
+                $pdo->prepare("UPDATE locations SET $sets WHERE id=?")
+                    ->execute(array_merge(array_values($data), [$id]));
+                AuditService::log('UPDATE', 'locations', $id, 'Location updated: ' . $data['name']);
+                Session::flash('success', 'Lokasi berhasil diperbarui.');
             } else {
-                $check=$db->prepare("SELECT id FROM locations WHERE code=?"); $check->execute([$data['code']]);
-                if ($check->fetch()) { flashMessage('error','Kode lokasi sudah digunakan.'); }
-                else {
-                    $data['created_by']=$_SESSION['user_id'];
-                    $cols=implode(',',array_map(fn($k)=>"`$k`",array_keys($data)));
-                    $vals=implode(',',array_fill(0,count($data),'?'));
-                    $db->prepare("INSERT INTO locations ($cols) VALUES ($vals)")->execute(array_values($data));
-                    auditLog('CREATE','locations',$db->lastInsertId(),'Location created: '.$data['name']);
-                    flashMessage('success','Lokasi berhasil ditambahkan.');
+                $check = $pdo->prepare("SELECT id FROM locations WHERE code=?");
+                $check->execute([$data['code']]);
+                if ($check->fetch()) {
+                    Session::flash('error', 'Kode lokasi sudah digunakan.');
+                } else {
+                    $data['created_by'] = Auth::id();
+                    $cols = implode(',', array_map(fn($k) => "`$k`", array_keys($data)));
+                    $vals = implode(',', array_fill(0, count($data), '?'));
+                    $pdo->prepare("INSERT INTO locations ($cols) VALUES ($vals)")
+                        ->execute(array_values($data));
+                    AuditService::log('CREATE', 'locations', (int)$pdo->lastInsertId(), 'Location created: ' . $data['name']);
+                    Session::flash('success', 'Lokasi berhasil ditambahkan.');
                 }
             }
         }
     } elseif ($action === 'delete') {
-        $items=$db->prepare("SELECT COUNT(*) FROM items WHERE location_id=?"); $items->execute([$id]);
-        if ($items->fetchColumn()>0){ flashMessage('error','Lokasi tidak dapat dihapus karena masih memiliki barang.'); }
-        else {
-            $loc=$db->prepare("SELECT name FROM locations WHERE id=?"); $loc->execute([$id]); $locData=$loc->fetch();
-            $db->prepare("DELETE FROM locations WHERE id=?")->execute([$id]);
-            auditLog('DELETE','locations',$id,'Location deleted: '.($locData['name']??''));
-            flashMessage('success','Lokasi berhasil dihapus.');
+        $items = $pdo->prepare("SELECT COUNT(*) FROM items WHERE location_id=?");
+        $items->execute([$id]);
+        if ($items->fetchColumn() > 0) {
+            Session::flash('error', 'Lokasi tidak dapat dihapus karena masih memiliki barang.');
+        } else {
+            $loc = $pdo->prepare("SELECT name FROM locations WHERE id=?");
+            $loc->execute([$id]);
+            $locData = $loc->fetch();
+            $pdo->prepare("DELETE FROM locations WHERE id=?")->execute([$id]);
+            AuditService::log('DELETE', 'locations', $id, 'Location deleted: ' . ($locData['name'] ?? ''));
+            Session::flash('success', 'Lokasi berhasil dihapus.');
         }
     }
-    header('Location: index.php'); exit;
+    header('Location: index.php');
+    exit;
 }
 
-$locations = $db->query("
-    SELECT l.*, COUNT(i.id) as item_count
+$locations = $pdo->query("
+    SELECT l.*, COUNT(i.id) AS item_count
     FROM locations l
-    LEFT JOIN items i ON l.id = i.location_id AND i.status='active'
+    LEFT JOIN items i ON l.id = i.location_id AND i.status = 'active'
     GROUP BY l.id
     ORDER BY l.building, l.floor, l.name
 ")->fetchAll();
 
-include __DIR__ . '/../../includes/header.php';
+include dirname(__DIR__, 2) . '/includes/header.php';
 ?>
 
 <div class="page-header">
   <div class="page-title">
-    <div class="breadcrumb"><a href="<?= APP_URL ?>/dashboard.php">Dashboard</a> <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path d="M9 18l6-6-6-6"/></svg> Lokasi</div>
+    <div class="breadcrumb">
+      <a href="<?= APP_URL ?>/dashboard.php">Dashboard</a>
+      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path d="M9 18l6-6-6-6"/></svg>
+      Lokasi
+    </div>
     <h2>Lokasi &amp; Ruangan</h2>
     <p>Kelola lokasi penyimpanan inventaris</p>
   </div>
-  <?php if (isAdmin()): ?>
+  <?php if (Auth::isAdmin()): ?>
   <button class="btn btn-primary" onclick="openModal('modalLocation')">
     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>
     Tambah Lokasi
@@ -89,26 +111,31 @@ include __DIR__ . '/../../includes/header.php';
     </div>
     <?php else: ?>
     <table class="table">
-      <thead><tr><th>Lokasi</th><th>Gedung</th><th>Lantai / Ruang</th><th>PIC</th><th>Jumlah Barang</th><?php if(isAdmin()):?><th style="text-align:right;">Aksi</th><?php endif;?></tr></thead>
+      <thead>
+        <tr>
+          <th>Lokasi</th><th>Gedung</th><th>Lantai / Ruang</th><th>PIC</th><th>Jumlah Barang</th>
+          <?php if (Auth::isAdmin()): ?><th style="text-align:right;">Aksi</th><?php endif; ?>
+        </tr>
+      </thead>
       <tbody>
         <?php foreach ($locations as $loc): ?>
         <tr>
           <td>
-            <div class="table-item-name"><?= sanitize($loc['name']) ?></div>
-            <div class="table-item-code mono"><?= sanitize($loc['code']) ?></div>
+            <div class="table-item-name"><?= Format::escape($loc['name']) ?></div>
+            <div class="table-item-code mono"><?= Format::escape($loc['code']) ?></div>
           </td>
-          <td><?= sanitize($loc['building'] ?: '-') ?></td>
-          <td><?= sanitize(($loc['floor'] ? 'Lt. '.$loc['floor'] : '') . ($loc['room'] ? ', '.$loc['room'] : '') ?: '-') ?></td>
+          <td><?= Format::escape($loc['building'] ?: '-') ?></td>
+          <td><?= Format::escape(($loc['floor'] ? 'Lt. ' . $loc['floor'] : '') . ($loc['room'] ? ', ' . $loc['room'] : '') ?: '-') ?></td>
           <td>
             <?php if ($loc['pic_name']): ?>
-              <div><?= sanitize($loc['pic_name']) ?></div>
-              <?php if ($loc['pic_phone']): ?><div class="table-item-code"><?= sanitize($loc['pic_phone']) ?></div><?php endif; ?>
+              <div><?= Format::escape($loc['pic_name']) ?></div>
+              <?php if ($loc['pic_phone']): ?><div class="table-item-code"><?= Format::escape($loc['pic_phone']) ?></div><?php endif; ?>
             <?php else: ?>-<?php endif; ?>
           </td>
           <td>
             <a href="<?= APP_URL ?>/modules/inventory/index.php?location=<?= $loc['id'] ?>" class="badge badge-accent"><?= $loc['item_count'] ?> barang</a>
           </td>
-          <?php if (isAdmin()): ?>
+          <?php if (Auth::isAdmin()): ?>
           <td style="text-align:right;">
             <div class="btn-group" style="justify-content:flex-end;">
               <button class="btn btn-ghost btn-icon btn-sm" onclick='editLocation(<?= htmlspecialchars(json_encode($loc)) ?>)' title="Edit">
@@ -117,7 +144,7 @@ include __DIR__ . '/../../includes/header.php';
               <form method="POST" style="display:inline;">
                 <input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="<?= $loc['id'] ?>">
                 <button type="button" class="btn btn-ghost btn-icon btn-sm" style="color:var(--danger);" title="Hapus"
-                  onclick="confirmDelete('Hapus lokasi <?= sanitize(addslashes($loc['name'])) ?>?', this.closest('form'))">
+                  onclick="confirmDelete('Hapus lokasi <?= Format::escape(addslashes($loc['name'])) ?>?', this.closest('form'))">
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
                 </button>
               </form>
@@ -132,7 +159,7 @@ include __DIR__ . '/../../includes/header.php';
   </div>
 </div>
 
-<?php if (isAdmin()): ?>
+<?php if (Auth::isAdmin()): ?>
 <div class="modal-overlay" id="modalLocation">
   <div class="modal modal-lg">
     <div class="modal-header">
@@ -178,4 +205,4 @@ function editLocation(loc) {
 </script>
 <?php endif; ?>
 
-<?php include __DIR__ . '/../../includes/footer.php'; ?>
+<?php include dirname(__DIR__, 2) . '/includes/footer.php'; ?>

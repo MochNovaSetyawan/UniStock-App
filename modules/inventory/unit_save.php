@@ -1,14 +1,19 @@
 <?php
-require_once __DIR__ . '/../../includes/config.php';
-require_once __DIR__ . '/../../includes/auth.php';
-require_once __DIR__ . '/../../includes/functions.php';
-requireRole('superadmin', 'admin');
+declare(strict_types=1);
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
+
+use App\Core\Auth;
+use App\Core\Database;
+use App\Core\Session;
+use App\Models\Item;
+
+Auth::requireRole('superadmin', 'admin');
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: index.php'); exit;
 }
 
-$db       = getDB();
+$pdo      = Database::getInstance();
 $itemId   = (int)($_POST['item_id'] ?? 0);
 $redirect = $_POST['_redirect'] ?? "units.php?item_id={$itemId}";
 $action   = $_POST['action'] ?? 'edit_unit';
@@ -22,42 +27,42 @@ if ($action === 'add_units') {
                   ? abs((float)$_POST['purchase_price']) : null;
 
     if (!$itemId) {
-        flashMessage('error', 'Barang tidak ditemukan.');
+        Session::flash('error', 'Barang tidak ditemukan.');
         header("Location: $redirect"); exit;
     }
 
     // Ambil data item (kode & kategori) untuk prefix unit
-    $itemRow = $db->prepare("SELECT code, category_id FROM items WHERE id = ?");
+    $itemRow = $pdo->prepare("SELECT code, category_id FROM items WHERE id = ?");
     $itemRow->execute([$itemId]);
     $itemData = $itemRow->fetch();
     if (!$itemData) {
-        flashMessage('error', 'Barang tidak ditemukan.');
+        Session::flash('error', 'Barang tidak ditemukan.');
         header("Location: $redirect"); exit;
     }
 
     // Hitung total unit saat ini sebagai basis penomoran
-    $maxStmt = $db->prepare("SELECT MAX(unit_number) FROM item_units WHERE item_id = ?");
+    $maxStmt = $pdo->prepare("SELECT MAX(unit_number) FROM item_units WHERE item_id = ?");
     $maxStmt->execute([$itemId]);
     $currentMax = (int)$maxStmt->fetchColumn();
     $newTotal   = $currentMax + $addQty;
 
     // Buat unit baru
-    generateMissingUnits($db, $itemId, $itemData['code'], $itemData['category_id'], $newTotal, $condition, $locationId);
+    (new Item())->generateUnits($itemId, $itemData['code'], $itemData['category_id'], $newTotal, $condition, $locationId);
 
     // Jika ada harga beli khusus batch ini, terapkan ke unit yang baru dibuat
     if ($batchPrice !== null) {
-        $db->prepare("
+        $pdo->prepare("
             UPDATE item_units SET purchase_price = ?
             WHERE item_id = ? AND unit_number > ? AND unit_number <= ?
         ")->execute([$batchPrice, $itemId, $currentMax, $newTotal]);
     }
 
     // Perbarui items.quantity ke total baru & sinkron quantity_available
-    $db->prepare("UPDATE items SET quantity = ?, updated_at = NOW() WHERE id = ?")
+    $pdo->prepare("UPDATE items SET quantity = ?, updated_at = NOW() WHERE id = ?")
        ->execute([$newTotal, $itemId]);
-    syncItemAvailability($db, $itemId);
+    (new Item())->syncAvailability($itemId);
 
-    flashMessage('success', "{$addQty} unit baru berhasil ditambahkan. Total unit sekarang: {$newTotal}.");
+    Session::flash('success', "{$addQty} unit baru berhasil ditambahkan. Total unit sekarang: {$newTotal}.");
     header("Location: $redirect"); exit;
 }
 
@@ -67,23 +72,23 @@ if ($action === 'bulk_status') {
     $status = $_POST['bulk_status'] ?? '';
     $allowed = ['available','borrowed','maintenance','damaged','disposed','lost'];
     if (empty($ids) || !in_array($status, $allowed)) {
-        flashMessage('error', 'Data tidak valid.'); header("Location: $redirect"); exit;
+        Session::flash('error', 'Data tidak valid.'); header("Location: $redirect"); exit;
     }
     $placeholders = implode(',', array_fill(0, count($ids), '?'));
-    $stmt = $db->prepare("UPDATE item_units SET status = ?, updated_at = NOW()
+    $stmt = $pdo->prepare("UPDATE item_units SET status = ?, updated_at = NOW()
                           WHERE id IN ({$placeholders}) AND item_id = ?");
     $stmt->execute(array_merge([$status], $ids, [$itemId]));
 
     // Sync quantity_available
-    syncItemAvailability($db, $itemId);
+    (new Item())->syncAvailability($itemId);
     $n = $stmt->rowCount();
-    flashMessage('success', "{$n} unit berhasil diubah ke status: {$status}.");
+    Session::flash('success', "{$n} unit berhasil diubah ke status: {$status}.");
     header("Location: $redirect"); exit;
 }
 
 // ---- SINGLE UNIT EDIT ----
 $unitId  = (int)($_POST['unit_id'] ?? 0);
-if (!$unitId) { flashMessage('error', 'Unit tidak ditemukan.'); header("Location: $redirect"); exit; }
+if (!$unitId) { Session::flash('error', 'Unit tidak ditemukan.'); header("Location: $redirect"); exit; }
 
 $allowed = ['available','borrowed','maintenance','damaged','disposed','lost'];
 $allowedCond = ['good','fair','poor','damaged'];
@@ -97,7 +102,7 @@ $price      = isset($_POST['purchase_price']) && $_POST['purchase_price'] !== ''
 $supplier   = trim($_POST['supplier'] ?? '') ?: null;
 $acquiredDate = $_POST['acquired_date'] ?? '' ?: null;
 
-$stmt = $db->prepare("UPDATE item_units
+$stmt = $pdo->prepare("UPDATE item_units
     SET status = ?, `condition` = ?, location_id = ?,
         notes = ?, disposed_date = ?, purchase_price = ?, supplier = ?, acquired_date = ?,
         updated_at = NOW()
@@ -107,7 +112,7 @@ $stmt->execute([$status, $condition, $locationId,
                 $unitId, $itemId]);
 
 // Sync quantity_available on the parent item
-syncItemAvailability($db, $itemId);
+(new Item())->syncAvailability($itemId);
 
-flashMessage('success', 'Unit berhasil diperbarui.');
+Session::flash('success', 'Unit berhasil diperbarui.');
 header("Location: $redirect"); exit;

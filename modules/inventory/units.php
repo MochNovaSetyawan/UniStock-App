@@ -1,14 +1,20 @@
 <?php
-require_once __DIR__ . '/../../includes/config.php';
-require_once __DIR__ . '/../../includes/auth.php';
-require_once __DIR__ . '/../../includes/functions.php';
-requireLogin();
+declare(strict_types=1);
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
 
-$db     = getDB();
+use App\Core\Auth;
+use App\Core\Database;
+use App\Core\Session;
+use App\Helpers\Format;
+use App\Helpers\Badge;
+
+Auth::requireLogin();
+
+$pdo     = Database::getInstance();
 $itemId = (int)($_GET['item_id'] ?? 0);
 
 // Load item
-$stmt = $db->prepare("
+$stmt = $pdo->prepare("
     SELECT i.*, c.name as cat_name, c.code as cat_code, c.color as cat_color,
            l.name as loc_name
     FROM items i
@@ -18,7 +24,7 @@ $stmt = $db->prepare("
 ");
 $stmt->execute([$itemId]);
 $item = $stmt->fetch();
-if (!$item) { flashMessage('error', 'Barang tidak ditemukan.'); header('Location: index.php'); exit; }
+if (!$item) { Session::flash('error', 'Barang tidak ditemukan.'); header('Location: index.php'); exit; }
 
 $catCode = $item['cat_code'] ?? '';
 $prefix  = $catCode ? "{$catCode}-{$item['code']}" : $item['code'];
@@ -38,7 +44,7 @@ if ($search)       { $where[] = '(iu.full_code LIKE ? OR iu.supplier LIKE ? OR i
 $whereStr = implode(' AND ', $where);
 
 // Stats
-$statsRows = $db->prepare("
+$statsRows = $pdo->prepare("
     SELECT status, COUNT(*) as cnt FROM item_units WHERE item_id = ? GROUP BY status
 ");
 $statsRows->execute([$itemId]);
@@ -47,7 +53,7 @@ foreach ($statsRows->fetchAll() as $r) { $stats[$r['status']] = (int)$r['cnt']; 
 $totalUnits = array_sum($stats);
 
 // Units list
-$unitStmt = $db->prepare("
+$unitStmt = $pdo->prepare("
     SELECT iu.*, l.name as loc_name
     FROM item_units iu
     LEFT JOIN locations l ON iu.location_id = l.id
@@ -57,10 +63,10 @@ $unitStmt = $db->prepare("
 $unitStmt->execute($params);
 $units = $unitStmt->fetchAll();
 
-$locations = $db->query("SELECT id, name FROM locations ORDER BY name")->fetchAll();
+$locations = $pdo->query("SELECT id, name FROM locations ORDER BY name")->fetchAll();
 
-$pageTitle = 'Kode Unit — ' . $item['name'];
-include __DIR__ . '/../../includes/header.php';
+$pageTitle = 'Unit — ' . $item['name'];
+include dirname(__DIR__, 2) . '/includes/header.php';
 ?>
 
 <div class="page-header">
@@ -70,14 +76,14 @@ include __DIR__ . '/../../includes/header.php';
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path d="M9 18l6-6-6-6"/></svg>
       <a href="index.php">Inventaris</a>
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path d="M9 18l6-6-6-6"/></svg>
-      <a href="view.php?id=<?= $item['id'] ?>"><?= sanitize($item['name']) ?></a>
+      <a href="view.php?id=<?= $item['id'] ?>"><?= Format::escape($item['name']) ?></a>
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path d="M9 18l6-6-6-6"/></svg>
-      Kode Unit
+      Unit
     </div>
-    <h2>Kode Unit — <?= sanitize($item['name']) ?></h2>
-    <p class="mono" style="color:var(--accent-light);"><?= sanitize($prefix) ?>-U001 &mdash; <?= sanitize($prefix) ?>-U<?= str_pad($totalUnits, 3, '0', STR_PAD_LEFT) ?></p>
+    <h2>Unit — <?= Format::escape($item['name']) ?></h2>
+    <p class="mono" style="color:var(--accent-light);"><?= Format::escape($prefix) ?>-U001 &mdash; <?= Format::escape($prefix) ?>-U<?= str_pad((string)$totalUnits, 3, '0', STR_PAD_LEFT) ?></p>
   </div>
-  <?php if (isAdmin()): ?>
+  <?php if (Auth::isAdmin()): ?>
   <a href="form.php?id=<?= $item['id'] ?>" class="btn btn-outline">
     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
     Edit Barang
@@ -114,7 +120,7 @@ include __DIR__ . '/../../includes/header.php';
       <input type="hidden" name="item_id" value="<?= $item['id'] ?>">
       <div class="search-box">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        <input type="text" name="search" value="<?= sanitize($search) ?>" placeholder="Cari kode, serial, catatan...">
+        <input type="text" name="search" value="<?= Format::escape($search) ?>" placeholder="Cari kode, serial, catatan...">
       </div>
       <select name="status" class="filter-select" onchange="this.form.submit()">
         <option value="">Semua Status</option>
@@ -157,7 +163,7 @@ include __DIR__ . '/../../includes/header.php';
     <table class="table">
       <thead>
         <tr>
-          <th>Kode Unit</th>
+          <th>Unit</th>
           <th>Status</th>
           <th>Kondisi</th>
           <th>Tgl Beli</th>
@@ -165,7 +171,7 @@ include __DIR__ . '/../../includes/header.php';
           <th>Harga Beli</th>
           <th>Lokasi</th>
           <th>Catatan</th>
-          <?php if (isAdmin()): ?><th style="text-align:right;">Aksi</th><?php endif; ?>
+          <?php if (Auth::isAdmin()): ?><th style="text-align:right;">Aksi</th><?php endif; ?>
         </tr>
       </thead>
       <tbody>
@@ -173,23 +179,23 @@ include __DIR__ . '/../../includes/header.php';
         <tr>
           <td>
             <span class="mono" style="font-size:0.85rem;font-weight:600;color:var(--accent-light);">
-              <?= sanitize($u['full_code']) ?>
+              <?= Format::escape($u['full_code']) ?>
             </span>
           </td>
-          <td><?= unitStatusBadge($u['status']) ?></td>
-          <td><?= conditionBadge($u['condition']) ?></td>
-          <td style="color:var(--text-muted);font-size:0.8rem;white-space:nowrap;"><?= $u['acquired_date'] ? formatDate($u['acquired_date']) : '—' ?></td>
-          <td style="color:var(--text-secondary);font-size:0.82rem;"><?= sanitize($u['supplier'] ?: '—') ?></td>
+          <td><?= Badge::unitStatus($u['status']) ?></td>
+          <td><?= Badge::condition($u['condition']) ?></td>
+          <td style="color:var(--text-muted);font-size:0.8rem;white-space:nowrap;"><?= $u['acquired_date'] ? Format::date($u['acquired_date']) : '—' ?></td>
+          <td style="color:var(--text-secondary);font-size:0.82rem;"><?= Format::escape($u['supplier'] ?: '—') ?></td>
           <td style="color:var(--text-secondary);white-space:nowrap;">
             <?php if ($u['purchase_price'] !== null): ?>
-              <span style="color:var(--text-primary);font-weight:600;">Rp <?= number_format($u['purchase_price'], 0, ',', '.') ?></span>
+              <span style="color:var(--text-primary);font-weight:600;">Rp <?= number_format((float)$u['purchase_price'], 0, ',', '.') ?></span>
             <?php else: ?>
               <span style="color:var(--text-muted);font-size:0.78rem;">—</span>
             <?php endif; ?>
           </td>
-          <td style="color:var(--text-secondary);"><?= sanitize($u['loc_name'] ?: ($item['loc_name'] ?? '—')) ?></td>
-          <td style="color:var(--text-muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="<?= sanitize($u['notes']) ?>"><?= sanitize($u['notes'] ?: '—') ?></td>
-          <?php if (isAdmin()): ?>
+          <td style="color:var(--text-secondary);"><?= Format::escape($u['loc_name'] ?: ($item['loc_name'] ?? '—')) ?></td>
+          <td style="color:var(--text-muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="<?= Format::escape($u['notes']) ?>"><?= Format::escape($u['notes'] ?: '—') ?></td>
+          <?php if (Auth::isAdmin()): ?>
           <td style="text-align:right;">
             <div class="btn-group" style="justify-content:flex-end;">
               <?php if (in_array($u['status'], ['available','damaged'])): ?>
@@ -215,7 +221,7 @@ include __DIR__ . '/../../includes/header.php';
 
 </div>
 
-<?php if (isAdmin()): ?>
+<?php if (Auth::isAdmin()): ?>
 <!-- Edit Unit Modal -->
 <div class="modal-overlay" id="editUnitModal">
   <div class="modal" style="max-width:480px;">
@@ -278,7 +284,7 @@ include __DIR__ . '/../../includes/header.php';
           <select name="location_id" id="editUnitLocation" class="form-control">
             <option value="">— Ikut lokasi barang —</option>
             <?php foreach ($locations as $loc): ?>
-            <option value="<?= $loc['id'] ?>"><?= sanitize($loc['name']) ?></option>
+            <option value="<?= $loc['id'] ?>"><?= Format::escape($loc['name']) ?></option>
             <?php endforeach; ?>
           </select>
         </div>
@@ -345,7 +351,7 @@ include __DIR__ . '/../../includes/header.php';
                     placeholder="Jelaskan masalah secara detail..."></textarea>
         </div>
 
-        <?php if (isAdmin()): ?>
+        <?php if (Auth::isAdmin()): ?>
         <div style="height:1px;background:var(--border);"></div>
         <div class="form-grid" style="grid-template-columns:1fr 1fr;">
           <div class="form-group" style="margin:0;">
@@ -394,9 +400,30 @@ function openEditModal(unit) {
   document.getElementById('editUnitSupplier').value       = unit.supplier || '';
   document.getElementById('editUnitLocation').value       = unit.location_id || '';
   document.getElementById('editUnitNotes').value          = unit.notes || '';
+  _syncConditionField();
   openModal('editUnitModal');
 }
 
+function _syncConditionField() {
+  var status = document.getElementById('editUnitStatus').value;
+  var condWrapper = document.getElementById('editUnitCondition').closest('.form-group');
+  var noCondStatus = ['lost', 'disposed'];
+  if (noCondStatus.includes(status)) {
+    document.getElementById('editUnitCondition').value = 'damaged';
+    condWrapper.style.opacity = '0.4';
+    condWrapper.style.pointerEvents = 'none';
+    condWrapper.title = 'Kondisi otomatis diset Rusak untuk status ' + (status === 'lost' ? 'Hilang' : 'Dibuang');
+  } else {
+    condWrapper.style.opacity = '';
+    condWrapper.style.pointerEvents = '';
+    condWrapper.title = '';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  document.getElementById('editUnitStatus').addEventListener('change', _syncConditionField);
+});
+
 </script>
 
-<?php include __DIR__ . '/../../includes/footer.php'; ?>
+<?php include dirname(__DIR__, 2) . '/includes/footer.php'; ?>

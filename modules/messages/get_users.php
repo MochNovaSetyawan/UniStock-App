@@ -1,19 +1,25 @@
 <?php
-// ============================================
-// UNISTOCK - Get Users for Compose (AJAX)
-// ============================================
-require_once __DIR__ . '/../../includes/config.php';
-require_once __DIR__ . '/../../includes/auth.php';
+
+declare(strict_types=1);
+
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
+
+use App\Core\Auth;
+use App\Core\Database;
 
 header('Content-Type: application/json');
-if (!isLoggedIn()) { echo '[]'; exit; }
 
-$q  = trim($_GET['q'] ?? '');
-$db = getDB();
-$me = (int)$_SESSION['user_id'];
+if (!Auth::check()) {
+    echo '[]';
+    exit;
+}
+
+$q   = trim($_GET['q'] ?? '');
+$me  = Auth::id();
+$pdo = Database::getInstance();
 
 if (strlen($q) >= 1) {
-    $stmt = $db->prepare("
+    $stmt = $pdo->prepare("
         SELECT id, full_name, role, department
         FROM users
         WHERE id != ? AND is_active = 1
@@ -24,7 +30,7 @@ if (strlen($q) >= 1) {
     $like = '%' . $q . '%';
     $stmt->execute([$me, $like, $like, $like]);
 } else {
-    $stmt = $db->prepare("
+    $stmt = $pdo->prepare("
         SELECT id, full_name, role, department
         FROM users
         WHERE id != ? AND is_active = 1
@@ -34,4 +40,4 @@ if (strlen($q) >= 1) {
     $stmt->execute([$me]);
 }
 
-echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
+echo json_encode($stmt->fetchAll(\PDO::FETCH_ASSOC));

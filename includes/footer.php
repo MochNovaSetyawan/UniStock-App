@@ -1,11 +1,16 @@
+<?php
+use App\Core\Auth;
+use App\Helpers\Format;
+use App\Models\Setting;
+?>
   </main><!-- end .page-content -->
 
   <footer style="padding: 16px 28px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
     <span style="font-size: 0.75rem; color: var(--text-muted);">
-      &copy; <?= date('Y') ?> <?= sanitize(getSetting('university_name', 'Universitas Nusantara')) ?> &mdash; <?= sanitize(getSetting('app_name', 'Unistock')) ?> v<?= getSetting('app_version', '1.0.0') ?>
+      &copy; <?= date('Y') ?> <?= Format::escape($uniName) ?> &mdash; <?= Format::escape($appName) ?> v<?= Setting::get('app_version', '1.0.0') ?>
     </span>
     <span style="font-size: 0.75rem; color: var(--text-muted);">
-      <?= sanitize($_SESSION['user_name'] ?? '') ?> &bull; <?= date('d M Y, H:i') ?>
+      <?= Format::escape($currentUser['full_name'] ?? '') ?> &bull; <?= date('d M Y, H:i') ?>
     </span>
   </footer>
 
@@ -15,7 +20,7 @@
 <!-- ═══════════════════════════════════════════════════════
      LINKEDIN-STYLE FLOATING CHAT WIDGET
      ═══════════════════════════════════════════════════════ -->
-<?php if (isLoggedIn()): ?>
+<?php if (Auth::check()): ?>
 <div id="cwRoot">
 
   <!-- Bubble stack (opens to the left, filled by JS) -->
@@ -310,7 +315,7 @@ document.querySelectorAll('tr[data-href]').forEach(row => {
 // UNISTOCK REALTIME — reminder checker + message badge poller
 // ============================================================
 const _APP_URL = '<?= APP_URL ?>';
-let _notifKnownCount = <?= (int)countUnreadNotifications() ?>;
+let _notifKnownCount = <?= (int)$notifCount ?>;
 
 // ── Escape HTML untuk rendering JS ───────────────────────────
 function _esc(s) {

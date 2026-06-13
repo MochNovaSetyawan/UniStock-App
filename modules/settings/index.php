@@ -1,71 +1,80 @@
 <?php
-require_once __DIR__ . '/../../includes/config.php';
-require_once __DIR__ . '/../../includes/auth.php';
-require_once __DIR__ . '/../../includes/functions.php';
-requireRole('superadmin');
+
+declare(strict_types=1);
+
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
+
+use App\Core\Auth;
+use App\Core\Database;
+use App\Core\Session;
+use App\Helpers\Format;
+use App\Helpers\Upload;
+use App\Models\Setting;
+use App\Services\AuditService;
+
+Auth::requireRole('superadmin');
 
 $pageTitle = 'Pengaturan Sistem';
-$db = getDB();
+$pdo = Database::getInstance();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
-    // Hapus logo
+    // Remove logo
     if (isset($_POST['remove_logo'])) {
-        $oldLogo = getSetting('app_logo', '');
-        if ($oldLogo && file_exists(UPLOAD_PATH . $oldLogo)) {
-            unlink(UPLOAD_PATH . $oldLogo);
-        }
-        $db->prepare("INSERT INTO settings (`key`,value,updated_by) VALUES ('app_logo','',?) ON DUPLICATE KEY UPDATE value='', updated_by=?")
-           ->execute([$_SESSION['user_id'], $_SESSION['user_id']]);
-        auditLog('UPDATE', 'settings', null, 'Logo aplikasi dihapus');
-        flashMessage('success', 'Logo berhasil dihapus.');
-        header('Location: index.php'); exit;
+        $oldLogo = Setting::get('app_logo', '');
+        Upload::delete($oldLogo);
+        Setting::set('app_logo', '', Auth::id());
+        AuditService::log('UPDATE', 'settings', null, 'Logo aplikasi dihapus');
+        Session::flash('success', 'Logo berhasil dihapus.');
+        header('Location: index.php');
+        exit;
     }
 
-    // Upload logo baru
+    // Upload new logo
     if (!empty($_FILES['app_logo']['name'])) {
-        $upload = uploadImage($_FILES['app_logo'], 'logo');
+        $upload = Upload::image($_FILES['app_logo'], 'logo');
         if (isset($upload['error'])) {
-            flashMessage('error', $upload['error']);
-            header('Location: index.php'); exit;
+            Session::flash('error', $upload['error']);
+            header('Location: index.php');
+            exit;
         }
-        // Hapus logo lama
-        $oldLogo = getSetting('app_logo', '');
-        if ($oldLogo && file_exists(UPLOAD_PATH . $oldLogo)) {
-            unlink(UPLOAD_PATH . $oldLogo);
-        }
-        $db->prepare("INSERT INTO settings (`key`,value,updated_by) VALUES ('app_logo',?,?) ON DUPLICATE KEY UPDATE value=?, updated_by=?")
-           ->execute([$upload['path'], $_SESSION['user_id'], $upload['path'], $_SESSION['user_id']]);
-        auditLog('UPDATE', 'settings', null, 'Logo aplikasi diperbarui');
+        Upload::delete(Setting::get('app_logo', ''));
+        Setting::set('app_logo', $upload['path'], Auth::id());
+        AuditService::log('UPDATE', 'settings', null, 'Logo aplikasi diperbarui');
     }
 
-    // Update pengaturan teks
+    // Update text settings
     $keys = [
         'app_name', 'university_name', 'items_per_page',
         'borrow_max_days', 'low_stock_threshold',
-        'allow_worker_borrow', 'require_approval', 'timezone'
+        'allow_worker_borrow', 'require_approval', 'timezone',
     ];
+    $me = Auth::id();
     foreach ($keys as $key) {
         if (isset($_POST[$key])) {
-            $val = trim($_POST[$key]);
-            $db->prepare("UPDATE settings SET value=?, updated_by=? WHERE `key`=?")->execute([$val, $_SESSION['user_id'], $key]);
+            $pdo->prepare("UPDATE settings SET value=?, updated_by=? WHERE `key`=?")
+                ->execute([trim($_POST[$key]), $me, $key]);
         }
     }
-    auditLog('UPDATE', 'settings', null, 'System settings updated');
-    flashMessage('success', 'Pengaturan berhasil disimpan.');
-    header('Location: index.php'); exit;
+    AuditService::log('UPDATE', 'settings', null, 'System settings updated');
+    Session::flash('success', 'Pengaturan berhasil disimpan.');
+    header('Location: index.php');
+    exit;
 }
 
-// Load all settings
-$allSettings = $db->query("SELECT `key`, value FROM settings")->fetchAll(PDO::FETCH_KEY_PAIR);
+$allSettings = $pdo->query("SELECT `key`, value FROM settings")->fetchAll(\PDO::FETCH_KEY_PAIR);
 $currentLogo = $allSettings['app_logo'] ?? '';
 
-include __DIR__ . '/../../includes/header.php';
+include dirname(__DIR__, 2) . '/includes/header.php';
 ?>
 
 <div class="page-header">
   <div class="page-title">
-    <div class="breadcrumb"><a href="<?= APP_URL ?>/dashboard.php">Dashboard</a> <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path d="M9 18l6-6-6-6"/></svg> Pengaturan</div>
+    <div class="breadcrumb">
+      <a href="<?= APP_URL ?>/dashboard.php">Dashboard</a>
+      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path d="M9 18l6-6-6-6"/></svg>
+      Pengaturan
+    </div>
     <h2>Pengaturan Sistem</h2>
     <p>Konfigurasi aplikasi inventaris</p>
   </div>
@@ -75,13 +84,11 @@ include __DIR__ . '/../../includes/header.php';
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start;">
 
     <div>
-      <!-- CARD: Logo Aplikasi -->
+      <!-- Logo Aplikasi -->
       <div class="card mb-20">
         <div class="card-header"><div class="card-title">Logo Aplikasi</div></div>
         <div class="card-body">
           <div style="display:flex;align-items:center;gap:20px;">
-
-            <!-- Preview -->
             <div id="logoWrap" style="width:80px;height:80px;flex-shrink:0;border-radius:12px;background:var(--bg-elevated);border:2px dashed var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;">
               <?php if ($currentLogo && file_exists(UPLOAD_PATH . $currentLogo)): ?>
                 <img id="logoPreview" src="<?= UPLOAD_URL . htmlspecialchars($currentLogo) ?>" style="width:100%;height:100%;object-fit:contain;padding:8px;">
@@ -93,8 +100,6 @@ include __DIR__ . '/../../includes/header.php';
                 <img id="logoPreview" src="" style="display:none;width:100%;height:100%;object-fit:contain;padding:8px;">
               <?php endif; ?>
             </div>
-
-            <!-- Actions -->
             <div>
               <p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px;line-height:1.5;">
                 Format: JPG, PNG, WebP, GIF<br>
@@ -116,7 +121,6 @@ include __DIR__ . '/../../includes/header.php';
                 <?php endif; ?>
               </div>
             </div>
-
           </div>
         </div>
       </div>
@@ -127,17 +131,17 @@ include __DIR__ . '/../../includes/header.php';
           <div class="form-grid">
             <div class="form-group full">
               <label class="form-label">Nama Aplikasi</label>
-              <input type="text" name="app_name" class="form-control" value="<?= sanitize($allSettings['app_name'] ?? 'Unistock') ?>">
+              <input type="text" name="app_name" class="form-control" value="<?= Format::escape($allSettings['app_name'] ?? 'Unistock') ?>">
             </div>
             <div class="form-group full">
               <label class="form-label">Nama Universitas</label>
-              <input type="text" name="university_name" class="form-control" value="<?= sanitize($allSettings['university_name'] ?? '') ?>">
+              <input type="text" name="university_name" class="form-control" value="<?= Format::escape($allSettings['university_name'] ?? '') ?>">
             </div>
             <div class="form-group">
               <label class="form-label">Timezone</label>
               <select name="timezone" class="form-control">
-                <?php foreach (['Asia/Jakarta'=>'WIB (Asia/Jakarta)','Asia/Makassar'=>'WITA (Asia/Makassar)','Asia/Jayapura'=>'WIT (Asia/Jayapura)'] as $v=>$l): ?>
-                <option value="<?= $v ?>" <?= ($allSettings['timezone']??'Asia/Jakarta')===$v?'selected':'' ?>><?= $l ?></option>
+                <?php foreach (['Asia/Jakarta' => 'WIB (Asia/Jakarta)', 'Asia/Makassar' => 'WITA (Asia/Makassar)', 'Asia/Jayapura' => 'WIT (Asia/Jayapura)'] as $v => $l): ?>
+                <option value="<?= $v ?>" <?= ($allSettings['timezone'] ?? 'Asia/Jakarta') === $v ? 'selected' : '' ?>><?= $l ?></option>
                 <?php endforeach; ?>
               </select>
             </div>
@@ -151,8 +155,8 @@ include __DIR__ . '/../../includes/header.php';
           <div class="form-group">
             <label class="form-label">Item per Halaman</label>
             <select name="items_per_page" class="form-control">
-              <?php foreach ([10,15,20,25,50] as $n): ?>
-              <option value="<?= $n ?>" <?= ($allSettings['items_per_page']??15)==$n?'selected':'' ?>><?= $n ?></option>
+              <?php foreach ([10, 15, 20, 25, 50] as $n): ?>
+              <option value="<?= $n ?>" <?= ($allSettings['items_per_page'] ?? 15) == $n ? 'selected' : '' ?>><?= $n ?></option>
               <?php endforeach; ?>
             </select>
           </div>
@@ -178,7 +182,7 @@ include __DIR__ . '/../../includes/header.php';
             <div class="form-group full">
               <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:12px;">
                 <input type="hidden" name="require_approval" value="0">
-                <input type="checkbox" name="require_approval" value="1" <?= ($allSettings['require_approval']??1)?'checked':'' ?> style="width:16px;height:16px;accent-color:var(--accent);">
+                <input type="checkbox" name="require_approval" value="1" <?= ($allSettings['require_approval'] ?? 1) ? 'checked' : '' ?> style="width:16px;height:16px;accent-color:var(--accent);">
                 <span>
                   <strong style="font-size:0.85rem;">Wajib Persetujuan Admin</strong>
                   <span class="form-hint" style="display:block;">Peminjaman oleh worker perlu disetujui admin</span>
@@ -186,7 +190,7 @@ include __DIR__ . '/../../includes/header.php';
               </label>
               <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
                 <input type="hidden" name="allow_worker_borrow" value="0">
-                <input type="checkbox" name="allow_worker_borrow" value="1" <?= ($allSettings['allow_worker_borrow']??1)?'checked':'' ?> style="width:16px;height:16px;accent-color:var(--accent);">
+                <input type="checkbox" name="allow_worker_borrow" value="1" <?= ($allSettings['allow_worker_borrow'] ?? 1) ? 'checked' : '' ?> style="width:16px;height:16px;accent-color:var(--accent);">
                 <span>
                   <strong style="font-size:0.85rem;">Worker Dapat Mengajukan Pinjam</strong>
                   <span class="form-hint" style="display:block;">Izinkan pekerja mengajukan permohonan peminjaman</span>
@@ -201,10 +205,10 @@ include __DIR__ . '/../../includes/header.php';
         <div class="card-header"><div class="card-title">Info Sistem</div></div>
         <div class="card-body" style="font-size:0.83rem;color:var(--text-secondary);">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-            <div><span style="color:var(--text-muted);">Versi:</span><br><strong><?= sanitize($allSettings['app_version'] ?? '1.0.0') ?></strong></div>
+            <div><span style="color:var(--text-muted);">Versi:</span><br><strong><?= Format::escape($allSettings['app_version'] ?? '1.0.0') ?></strong></div>
             <div><span style="color:var(--text-muted);">PHP:</span><br><strong><?= PHP_VERSION ?></strong></div>
             <div><span style="color:var(--text-muted);">Database:</span><br><strong><?= DB_NAME ?></strong></div>
-            <div><span style="color:var(--text-muted);">Server:</span><br><strong><?= $_SERVER['SERVER_NAME'] ?? 'localhost' ?></strong></div>
+            <div><span style="color:var(--text-muted);">Server:</span><br><strong><?= Format::escape($_SERVER['SERVER_NAME'] ?? 'localhost') ?></strong></div>
           </div>
         </div>
       </div>
@@ -236,4 +240,4 @@ function previewLogo(input) {
 }
 </script>
 
-<?php include __DIR__ . '/../../includes/footer.php'; ?>
+<?php include dirname(__DIR__, 2) . '/includes/footer.php'; ?>

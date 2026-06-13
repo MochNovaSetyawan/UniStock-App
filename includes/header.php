@@ -1,16 +1,24 @@
 <?php
-// header.php - Call requireLogin() before including this
-$appName     = getSetting('app_name', 'Unistock');
-$uniName     = getSetting('university_name', 'Universitas Nusantara');
-$appLogo     = getSetting('app_logo', '');
-$currentUser = currentUser();
-$notifCount  = countUnreadNotifications();
-$msgCount    = countUnreadMessages();
+// header.php – included by every authenticated page (after bootstrap.php is loaded)
+use App\Core\Auth;
+use App\Core\Session;
+use App\Helpers\Badge;
+use App\Helpers\Format;
+use App\Models\Message;
+use App\Models\Setting;
+use App\Services\NotificationService;
 
-$flashSuccess = getFlash('success');
-$flashError   = getFlash('error');
-$flashInfo    = getFlash('info');
-$flashWarning = getFlash('warning');
+$appName     = Setting::get('app_name', 'Unistock');
+$uniName     = Setting::get('university_name', 'Universitas Nusantara');
+$appLogo     = Setting::get('app_logo', '');
+$currentUser = Auth::user();
+$notifCount  = NotificationService::countUnread();
+$msgCount    = Auth::check() ? (new Message())->countUnread((int) Auth::id()) : 0;
+
+$flashSuccess = Session::getFlash('success');
+$flashError   = Session::getFlash('error');
+$flashInfo    = Session::getFlash('info');
+$flashWarning = Session::getFlash('warning');
 
 $currentPage = basename($_SERVER['PHP_SELF']);
 $currentDir  = basename(dirname($_SERVER['PHP_SELF']));
@@ -20,7 +28,7 @@ $currentDir  = basename(dirname($_SERVER['PHP_SELF']));
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title><?= isset($pageTitle) ? sanitize($pageTitle) . ' — ' : '' ?><?= $appName ?></title>
+  <title><?= isset($pageTitle) ? Format::escape($pageTitle) . ' — ' : '' ?><?= $appName ?></title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -40,7 +48,7 @@ $currentDir  = basename(dirname($_SERVER['PHP_SELF']));
   <div class="sidebar-logo">
     <div class="logo-icon" <?= ($appLogo && file_exists(UPLOAD_PATH . $appLogo)) ? 'style="background:transparent;box-shadow:none;padding:2px;"' : '' ?>>
       <?php if ($appLogo && file_exists(UPLOAD_PATH . $appLogo)): ?>
-        <img src="<?= UPLOAD_URL . htmlspecialchars($appLogo) ?>" alt="<?= sanitize($appName) ?>" style="width:100%;height:100%;object-fit:contain;border-radius:6px;">
+        <img src="<?= UPLOAD_URL . htmlspecialchars($appLogo) ?>" alt="<?= Format::escape($appName) ?>" style="width:100%;height:100%;object-fit:contain;border-radius:6px;">
       <?php else: ?>
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="20" height="20">
           <path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10" />
@@ -102,7 +110,7 @@ $currentDir  = basename(dirname($_SERVER['PHP_SELF']));
     </div>
 
     <!-- REPORTS (Admin+) -->
-    <?php if (isAdmin()): ?>
+    <?php if (Auth::isAdmin()): ?>
     <div class="nav-section">
       <div class="nav-section-label">Laporan</div>
 
@@ -114,7 +122,7 @@ $currentDir  = basename(dirname($_SERVER['PHP_SELF']));
     <?php endif; ?>
 
     <!-- ADMIN ONLY -->
-    <?php if (isSuperAdmin()): ?>
+    <?php if (Auth::isSuperAdmin()): ?>
     <div class="nav-section">
       <div class="nav-section-label">Administrasi</div>
 
@@ -143,8 +151,8 @@ $currentDir  = basename(dirname($_SERVER['PHP_SELF']));
       <?= strtoupper(substr($currentUser['full_name'] ?? 'U', 0, 1)) ?>
     </div>
     <div class="user-info">
-      <strong><?= sanitize($currentUser['full_name'] ?? '') ?></strong>
-      <span><?= roleBadge($currentUser['role'] ?? 'worker') ?></span>
+      <strong><?= Format::escape($currentUser['full_name'] ?? '') ?></strong>
+      <span><?= Badge::role($currentUser['role'] ?? 'worker') ?></span>
     </div>
     <a href="<?= APP_URL ?>/logout.php" class="user-logout" title="Keluar">
       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
@@ -202,7 +210,7 @@ $currentDir  = basename(dirname($_SERVER['PHP_SELF']));
           </div>
           <div id="notifList">
           <?php
-          $notifs = getUnreadNotifications(6);
+          $notifs = NotificationService::getUnread(6);
           if (empty($notifs)):
           ?>
           <div style="padding:20px; text-align:center; color:var(--text-muted); font-size:0.8rem;">Tidak ada notifikasi baru</div>
@@ -215,9 +223,9 @@ $currentDir  = basename(dirname($_SERVER['PHP_SELF']));
              class="dropdown-item notif-item" style="flex-direction:column; align-items:flex-start; gap:3px;">
             <div style="display:flex; align-items:center; gap:8px; width:100%;">
               <span style="width:7px;height:7px;border-radius:50%;background:<?= $dotColor ?>;flex-shrink:0;"></span>
-              <span style="font-size:0.83rem; font-weight:500; color:var(--text-primary); flex:1;"><?= sanitize($n['title']) ?></span>
+              <span style="font-size:0.83rem; font-weight:500; color:var(--text-primary); flex:1;"><?= Format::escape($n['title']) ?></span>
             </div>
-            <span style="font-size:0.75rem; color:var(--text-muted); padding-left:15px;"><?= sanitize($n['message']) ?></span>
+            <span style="font-size:0.75rem; color:var(--text-muted); padding-left:15px;"><?= Format::escape($n['message']) ?></span>
           </a>
           <?php endforeach; endif; ?>
           </div>
@@ -233,8 +241,8 @@ $currentDir  = basename(dirname($_SERVER['PHP_SELF']));
         </div>
         <div class="dropdown-menu">
           <div style="padding: 12px 16px; border-bottom: 1px solid var(--border);">
-            <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary);"><?= sanitize($currentUser['full_name'] ?? '') ?></div>
-            <div style="font-size: 0.75rem; color: var(--text-muted);"><?= sanitize($currentUser['email'] ?? '') ?></div>
+            <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary);"><?= Format::escape($currentUser['full_name'] ?? '') ?></div>
+            <div style="font-size: 0.75rem; color: var(--text-muted);"><?= Format::escape($currentUser['email'] ?? '') ?></div>
           </div>
           <a href="<?= APP_URL ?>/modules/profile.php" class="dropdown-item">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>

@@ -1,17 +1,24 @@
 <?php
-require_once __DIR__ . '/../../includes/config.php';
-require_once __DIR__ . '/../../includes/auth.php';
-require_once __DIR__ . '/../../includes/functions.php';
-requireLogin();
+declare(strict_types=1);
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
+
+use App\Core\Auth;
+use App\Core\Database;
+use App\Helpers\Format;
+use App\Helpers\Badge;
+use App\Helpers\Paginator;
+use App\Models\Setting;
+
+Auth::requireLogin();
 
 $pageTitle = 'Pemeliharaan';
-$db = getDB();
+$pdo = Database::getInstance();
 
 $search   = trim($_GET['search'] ?? '');
 $status   = $_GET['status'] ?? '';
 $priority = $_GET['priority'] ?? '';
 $itemId   = (int)($_GET['item_id'] ?? 0);
-$perPage  = (int)getSetting('items_per_page', 15);
+$perPage  = (int)Setting::get('items_per_page', 15);
 $page     = max(1, (int)($_GET['page'] ?? 1));
 $offset   = ($page - 1) * $perPage;
 
@@ -20,14 +27,14 @@ if ($search)   { $where[] = '(m.title LIKE ? OR i.name LIKE ? OR m.code LIKE ?)'
 if ($status)   { $where[] = 'm.status = ?'; $params[] = $status; }
 if ($priority) { $where[] = 'm.priority = ?'; $params[] = $priority; }
 if ($itemId)   { $where[] = 'm.item_id = ?'; $params[] = $itemId; }
-if (hasRole('worker')) { $where[] = 'm.requested_by = ?'; $params[] = $_SESSION['user_id']; }
+if (Auth::hasRole('worker')) { $where[] = 'm.requested_by = ?'; $params[] = Auth::id(); }
 
 $whereStr = implode(' AND ', $where);
 
-$cStmt = $db->prepare("SELECT COUNT(*) FROM maintenance m JOIN items i ON m.item_id=i.id WHERE $whereStr");
+$cStmt = $pdo->prepare("SELECT COUNT(*) FROM maintenance m JOIN items i ON m.item_id=i.id WHERE $whereStr");
 $cStmt->execute($params); $total = (int)$cStmt->fetchColumn();
 
-$stmt = $db->prepare("
+$stmt = $pdo->prepare("
     SELECT m.*, i.name as item_name, i.code as item_code,
            u1.full_name as requested_by_name, u2.full_name as assigned_to_name,
            iu.full_code as unit_full_code
@@ -46,7 +53,7 @@ $stmt = $db->prepare("
 $stmt->execute(array_merge($params, [$perPage, $offset]));
 $records = $stmt->fetchAll();
 
-include __DIR__ . '/../../includes/header.php';
+include dirname(__DIR__, 2) . '/includes/header.php';
 ?>
 
 <div class="page-header">
@@ -70,7 +77,7 @@ include __DIR__ . '/../../includes/header.php';
     <form method="GET" style="display:contents;">
       <div class="search-box">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        <input type="text" name="search" value="<?= sanitize($search) ?>" placeholder="Cari judul, barang, kode...">
+        <input type="text" name="search" value="<?= Format::escape($search) ?>" placeholder="Cari judul, barang, kode...">
       </div>
       <select name="status" class="filter-select" onchange="this.form.submit()">
         <option value="">Semua Status</option>
@@ -108,35 +115,35 @@ include __DIR__ . '/../../includes/header.php';
           <th>Jadwal</th>
           <th>Teknisi</th>
           <th>Status</th>
-          <?php if (isAdmin()): ?><th style="text-align:right;">Aksi</th><?php endif; ?>
+          <?php if (Auth::isAdmin()): ?><th style="text-align:right;">Aksi</th><?php endif; ?>
         </tr>
       </thead>
       <tbody>
         <?php foreach ($records as $m): ?>
         <tr>
           <td>
-            <div class="table-item-name"><?= sanitize($m['item_name']) ?></div>
-            <div class="table-item-code"><?= sanitize($m['item_code']) ?></div>
+            <div class="table-item-name"><?= Format::escape($m['item_name']) ?></div>
+            <div class="table-item-code"><?= Format::escape($m['item_code']) ?></div>
           </td>
           <td>
-            <div class="table-item-name"><?= sanitize($m['title']) ?></div>
-            <div class="table-item-code"><?= sanitize($m['code']) ?></div>
+            <div class="table-item-name"><?= Format::escape($m['title']) ?></div>
+            <div class="table-item-code"><?= Format::escape($m['code']) ?></div>
           </td>
           <td>
             <?php if ($m['unit_full_code']): ?>
             <span class="mono" style="font-size:0.78rem;color:var(--accent-light);background:var(--accent-glow);padding:2px 7px;border-radius:4px;">
-              <?= sanitize($m['unit_full_code']) ?>
+              <?= Format::escape($m['unit_full_code']) ?>
             </span>
             <?php else: ?>
             <span class="td-meta">—</span>
             <?php endif; ?>
           </td>
-          <td><?= priorityBadge($m['priority']) ?></td>
-          <td class="td-meta"><?= $m['scheduled_date'] ? formatDate($m['scheduled_date']) : '—' ?></td>
-          <td><?= sanitize($m['technician'] ?: ($m['assigned_to_name'] ?: '—')) ?></td>
-          <td><?= statusBadge($m['status']) ?></td>
+          <td><?= Badge::priority($m['priority']) ?></td>
+          <td class="td-meta"><?= $m['scheduled_date'] ? Format::date($m['scheduled_date']) : '—' ?></td>
+          <td><?= Format::escape($m['technician'] ?: ($m['assigned_to_name'] ?: '—')) ?></td>
+          <td><?= Badge::status($m['status']) ?></td>
 
-          <?php if (isAdmin()): ?>
+          <?php if (Auth::isAdmin()): ?>
           <td style="text-align:right;">
             <div class="btn-group" style="justify-content:flex-end;gap:4px;">
 
@@ -164,7 +171,7 @@ include __DIR__ . '/../../includes/header.php';
               <?php elseif ($m['status'] === 'in_progress'): ?>
               <!-- Selesai -->
               <button type="button" class="btn btn-sm btn-outline" style="color:var(--success);border-color:var(--success);" title="Tandai Selesai"
-                onclick="openSelesai(<?= $m['id'] ?>, '<?= sanitize($m['unit_full_code']) ?>', '<?= sanitize($m['title']) ?>')">
+                onclick="openSelesai(<?= $m['id'] ?>, '<?= Format::escape($m['unit_full_code']) ?>', '<?= Format::escape($m['title']) ?>')">
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
                 Selesai
               </button>
@@ -203,11 +210,11 @@ include __DIR__ . '/../../includes/header.php';
     </table>
     <?php endif; ?>
   </div>
-  <?= paginate($total, $perPage, $page, '?' . http_build_query(array_filter(['search'=>$search,'status'=>$status,'priority'=>$priority]))) ?>
+  <?= Paginator::render($total, $perPage, $page, '?' . http_build_query(array_filter(['search'=>$search,'status'=>$status,'priority'=>$priority]))) ?>
 </div>
 
 <!-- ── Modal: Konfirmasi Selesai ──────────────────────────────────────────── -->
-<?php if (isAdmin()): ?>
+<?php if (Auth::isAdmin()): ?>
 <div class="modal-overlay" id="modalSelesai">
   <div class="modal">
     <div class="modal-header">
@@ -217,11 +224,11 @@ include __DIR__ . '/../../includes/header.php';
       </button>
     </div>
 
-    <form method="POST" action="action.php">
+    <form method="POST" action="action.php" style="display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;">
       <input type="hidden" name="action" value="complete">
       <input type="hidden" name="id" id="selesaiId">
 
-      <div class="modal-body">
+      <div class="modal-body" style="overflow-y:auto;flex:1;min-height:0;">
         <p id="selesaiTitle" style="font-weight:500;margin-bottom:16px;"></p>
 
         <!-- Tanggal selesai + Resolusi -->
@@ -339,4 +346,4 @@ document.addEventListener('DOMContentLoaded', function() {
 </script>
 <?php endif; ?>
 
-<?php include __DIR__ . '/../../includes/footer.php'; ?>
+<?php include dirname(__DIR__, 2) . '/includes/footer.php'; ?>

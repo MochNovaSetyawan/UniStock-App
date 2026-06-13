@@ -55,6 +55,7 @@
 html {
   font-size: 14px;
   scroll-behavior: smooth;
+  overflow-y: auto;
 }
 
 body {
@@ -1219,6 +1220,9 @@ select.form-control option {
   max-height: calc(100vh - 48px);
   display: flex;
   flex-direction: column;
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   transform: scale(0.95) translateY(10px);
   transition: transform var(--transition);
@@ -1270,10 +1274,19 @@ select.form-control option {
   height: 14px;
 }
 
+.modal > form {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .modal-body {
   padding: 24px;
   overflow-y: auto;
   flex: 1;
+  min-height: 0;
 }
 
 .modal-footer {
@@ -2014,23 +2027,49 @@ body.sidebar-unpinned .sidebar-pin-btn .pin-chevron {
 
 /* ============================================
    SCROLLBAR
+   Hanya muncul saat konten benar-benar overflow
    ============================================ */
+
+/* Ukuran scrollbar tipis */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
+/* Track transparan — tidak terlihat saat belum di-hover */
 ::-webkit-scrollbar-track {
-  background: var(--bg-surface);
+  background: transparent;
 }
 
+/* Thumb tersembunyi by default */
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: transparent;
   border-radius: 4px;
+  transition: background 0.2s ease;
 }
 
+/* Thumb muncul saat elemen di-hover */
+*:hover > ::-webkit-scrollbar-thumb,
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--border-light);
+  background: var(--border);
+}
+
+/* Elemen scrollable khusus (chat, list) — thumb selalu visible saat ada konten */
+.sidebar-scroll::-webkit-scrollbar-thumb,
+.conv-list::-webkit-scrollbar-thumb,
+.chat-messages::-webkit-scrollbar-thumb,
+.cwp-list::-webkit-scrollbar-thumb,
+.cwb-msgs::-webkit-scrollbar-thumb {
+  background: var(--border);
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+*:hover {
+  scrollbar-color: var(--border) transparent;
 }
 
 /* ============================================
@@ -2039,13 +2078,19 @@ body.sidebar-unpinned .sidebar-pin-btn .pin-chevron {
 @keyframes fadeIn {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(5px);
   }
 
   to {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* Khusus table row: opacity only — transform pada <tr> tidak smooth di semua browser */
+@keyframes fadeInRow {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 @keyframes pulse {
@@ -2067,7 +2112,8 @@ body.sidebar-unpinned .sidebar-pin-btn .pin-chevron {
 }
 
 .fade-in {
-  animation: fadeIn 0.3s ease forwards;
+  animation: fadeIn 0.42s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  will-change: opacity, transform;
 }
 
 .pulse {
@@ -2078,23 +2124,24 @@ body.sidebar-unpinned .sidebar-pin-btn .pin-chevron {
   animation: spin 1s linear infinite;
 }
 
-/* Staggered fade-in untuk semua baris tabel (delay-based, cover sampai 12 baris) */
+/* Staggered fade-in untuk semua baris tabel — opacity only, no transform */
 .table tbody tr {
-  animation: fadeIn 0.32s ease both;
+  animation: fadeInRow 0.38s ease-out both;
+  will-change: opacity;
 }
 .table tbody tr:nth-child(1)  { animation-delay: 0.00s; }
-.table tbody tr:nth-child(2)  { animation-delay: 0.05s; }
-.table tbody tr:nth-child(3)  { animation-delay: 0.10s; }
-.table tbody tr:nth-child(4)  { animation-delay: 0.15s; }
-.table tbody tr:nth-child(5)  { animation-delay: 0.20s; }
-.table tbody tr:nth-child(6)  { animation-delay: 0.25s; }
-.table tbody tr:nth-child(7)  { animation-delay: 0.30s; }
-.table tbody tr:nth-child(8)  { animation-delay: 0.35s; }
-.table tbody tr:nth-child(9)  { animation-delay: 0.38s; }
-.table tbody tr:nth-child(10) { animation-delay: 0.41s; }
-.table tbody tr:nth-child(11) { animation-delay: 0.44s; }
-.table tbody tr:nth-child(12) { animation-delay: 0.47s; }
-.table tbody tr:nth-child(n+13) { animation-delay: 0.50s; }
+.table tbody tr:nth-child(2)  { animation-delay: 0.04s; }
+.table tbody tr:nth-child(3)  { animation-delay: 0.08s; }
+.table tbody tr:nth-child(4)  { animation-delay: 0.12s; }
+.table tbody tr:nth-child(5)  { animation-delay: 0.16s; }
+.table tbody tr:nth-child(6)  { animation-delay: 0.20s; }
+.table tbody tr:nth-child(7)  { animation-delay: 0.24s; }
+.table tbody tr:nth-child(8)  { animation-delay: 0.28s; }
+.table tbody tr:nth-child(9)  { animation-delay: 0.30s; }
+.table tbody tr:nth-child(10) { animation-delay: 0.32s; }
+.table tbody tr:nth-child(11) { animation-delay: 0.34s; }
+.table tbody tr:nth-child(12) { animation-delay: 0.36s; }
+.table tbody tr:nth-child(n+13) { animation-delay: 0.38s; }
 
 /* ============================================
    PRINT

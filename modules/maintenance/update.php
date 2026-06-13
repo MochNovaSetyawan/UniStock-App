@@ -1,13 +1,20 @@
 <?php
-require_once __DIR__ . '/../../includes/config.php';
-require_once __DIR__ . '/../../includes/auth.php';
-require_once __DIR__ . '/../../includes/functions.php';
-requireRole('superadmin', 'admin');
+declare(strict_types=1);
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
 
-$db = getDB();
+use App\Core\Auth;
+use App\Core\Database;
+use App\Core\Session;
+use App\Helpers\Badge;
+use App\Helpers\Format;
+use App\Services\AuditService;
+
+Auth::requireRole('superadmin', 'admin');
+
+$pdo = Database::getInstance();
 $id = (int)($_GET['id'] ?? 0);
 
-$stmt = $db->prepare("
+$stmt = $pdo->prepare("
     SELECT m.*, i.name as item_name, i.id as item_id,
            iu.full_code as unit_full_code,
            iu.status as unit_current_status
@@ -18,7 +25,7 @@ $stmt = $db->prepare("
 ");
 $stmt->execute([$id]);
 $m = $stmt->fetch();
-if (!$m) { flashMessage('error', 'Tidak ditemukan.'); header('Location: index.php'); exit; }
+if (!$m) { Session::flash('error', 'Tidak ditemukan.'); header('Location: index.php'); exit; }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $technician = trim($_POST['technician'] ?? '');
@@ -27,20 +34,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $schedDate  = $_POST['scheduled_date'] ?: null;
     $assignedTo = (int)($_POST['assigned_to'] ?? 0) ?: null;
 
-    $db->prepare("
+    $pdo->prepare("
         UPDATE maintenance
         SET technician=?, cost=?, resolution=?, scheduled_date=?, assigned_to=?, updated_at=NOW()
         WHERE id=?
     ")->execute([$technician, $cost, $resolution, $schedDate, $assignedTo, $id]);
 
-    auditLog('UPDATE', 'maintenance', $id, 'Maintenance details updated: ' . $m['code']);
-    flashMessage('success', 'Detail pemeliharaan berhasil diperbarui.');
+    AuditService::log('UPDATE', 'maintenance', $id, 'Maintenance details updated: ' . $m['code']);
+    Session::flash('success', 'Detail pemeliharaan berhasil diperbarui.');
     header('Location: index.php'); exit;
 }
 
-$admins    = $db->query("SELECT id, full_name FROM users WHERE role IN ('superadmin','admin') AND is_active=1 ORDER BY full_name")->fetchAll();
+$admins    = $pdo->query("SELECT id, full_name FROM users WHERE role IN ('superadmin','admin') AND is_active=1 ORDER BY full_name")->fetchAll();
 $pageTitle = 'Edit Pemeliharaan';
-include __DIR__ . '/../../includes/header.php';
+include dirname(__DIR__, 2) . '/includes/header.php';
 ?>
 
 <div class="page-header">
@@ -53,7 +60,7 @@ include __DIR__ . '/../../includes/header.php';
       Edit
     </div>
     <h2>Edit Detail Pemeliharaan</h2>
-    <p><?= sanitize($m['title']) ?> &mdash; <?= sanitize($m['item_name']) ?></p>
+    <p><?= Format::escape($m['title']) ?> &mdash; <?= Format::escape($m['item_name']) ?></p>
   </div>
 </div>
 
@@ -64,8 +71,8 @@ include __DIR__ . '/../../includes/header.php';
     <div class="card-header">
       <div class="card-title">Detail Pemeliharaan</div>
       <div style="display:flex;gap:6px;align-items:center;">
-        <?= priorityBadge($m['priority']) ?>
-        <?= statusBadge($m['status']) ?>
+        <?= Badge::priority($m['priority']) ?>
+        <?= Badge::status($m['status']) ?>
       </div>
     </div>
 
@@ -73,8 +80,8 @@ include __DIR__ . '/../../includes/header.php';
     <div style="padding:11px 24px;border-bottom:1px solid var(--border);background:var(--accent-glow);display:flex;align-items:center;gap:10px;">
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" style="color:var(--accent-light);flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"/></svg>
       <span style="font-size:0.82rem;color:var(--text-secondary);">Unit yang dipelihara:</span>
-      <span class="mono" style="font-weight:600;color:var(--accent-light);"><?= sanitize($m['unit_full_code']) ?></span>
-      <span style="margin-left:4px;"><?= unitStatusBadge($m['unit_current_status']) ?></span>
+      <span class="mono" style="font-weight:600;color:var(--accent-light);"><?= Format::escape($m['unit_full_code']) ?></span>
+      <span style="margin-left:4px;"><?= Badge::unitStatus($m['unit_current_status']) ?></span>
     </div>
     <?php endif; ?>
 
@@ -87,7 +94,7 @@ include __DIR__ . '/../../includes/header.php';
           <select name="assigned_to" class="form-control">
             <option value="">-- Pilih Teknisi Internal --</option>
             <?php foreach ($admins as $a): ?>
-            <option value="<?= $a['id'] ?>" <?= $m['assigned_to']==$a['id']?'selected':'' ?>><?= sanitize($a['full_name']) ?></option>
+            <option value="<?= $a['id'] ?>" <?= $m['assigned_to']==$a['id']?'selected':'' ?>><?= Format::escape($a['full_name']) ?></option>
             <?php endforeach; ?>
           </select>
         </div>
@@ -95,7 +102,7 @@ include __DIR__ . '/../../includes/header.php';
         <!-- Technician -->
         <div class="form-group">
           <label class="form-label">Teknisi / Vendor</label>
-          <input type="text" name="technician" class="form-control" value="<?= sanitize($m['technician']??'') ?>" placeholder="Nama teknisi atau vendor...">
+          <input type="text" name="technician" class="form-control" value="<?= Format::escape($m['technician']??'') ?>" placeholder="Nama teknisi atau vendor...">
         </div>
 
         <!-- Scheduled date -->
@@ -113,7 +120,7 @@ include __DIR__ . '/../../includes/header.php';
         <!-- Resolution -->
         <div class="form-group full">
           <label class="form-label">Resolusi / Tindakan yang Dilakukan</label>
-          <textarea name="resolution" class="form-control" rows="3" placeholder="Jelaskan tindakan yang sudah dilakukan..."><?= sanitize($m['resolution']??'') ?></textarea>
+          <textarea name="resolution" class="form-control" rows="3" placeholder="Jelaskan tindakan yang sudah dilakukan..."><?= Format::escape($m['resolution']??'') ?></textarea>
         </div>
 
       </div>
@@ -126,4 +133,4 @@ include __DIR__ . '/../../includes/header.php';
   </div>
 </form>
 
-<?php include __DIR__ . '/../../includes/footer.php'; ?>
+<?php include dirname(__DIR__, 2) . '/includes/footer.php'; ?>

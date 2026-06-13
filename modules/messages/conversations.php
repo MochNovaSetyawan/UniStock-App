@@ -1,17 +1,26 @@
 <?php
-require_once __DIR__ . '/../../includes/config.php';
-require_once __DIR__ . '/../../includes/auth.php';
+
+declare(strict_types=1);
+
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
+
+use App\Core\Auth;
+use App\Core\Database;
 
 header('Content-Type: application/json');
-if (!isLoggedIn()) { echo json_encode(['conversations' => []]); exit; }
 
-$me = (int)$_SESSION['user_id'];
-$db = getDB();
+if (!Auth::check()) {
+    echo json_encode(['conversations' => []]);
+    exit;
+}
 
-$stmt = $db->prepare("
+$me  = Auth::id();
+$pdo = Database::getInstance();
+
+$stmt = $pdo->prepare("
     SELECT
         u.id, u.full_name, u.role, u.department,
-        lm.message    AS last_message,
+        lm.message      AS last_message,
         lm.from_user_id AS last_from,
         DATE_FORMAT(lm.created_at, '%d %b %H:%i') AS last_time,
         lm.created_at AS raw_time,
@@ -33,15 +42,15 @@ $stmt = $db->prepare("
     ORDER BY raw_time DESC
 ");
 $stmt->execute([
-    ':me' => $me,':me2' => $me,':me3' => $me,
-    ':me4' => $me,':me5' => $me,':me6' => $me,
+    ':me' => $me, ':me2' => $me, ':me3' => $me,
+    ':me4' => $me, ':me5' => $me, ':me6' => $me,
 ]);
-$rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$rows = $stmt->fetchAll(\PDO::FETCH_ASSOC);
 
 foreach ($rows as &$r) {
-    $r['id']      = (int)$r['id'];
-    $r['unread']  = (int)$r['unread'];
-    $r['from_me'] = ((int)$r['last_from'] === $me);
+    $r['id']       = (int)$r['id'];
+    $r['unread']   = (int)$r['unread'];
+    $r['from_me']  = ((int)$r['last_from'] === $me);
     $r['initials'] = strtoupper(mb_substr($r['full_name'], 0, 1));
     unset($r['last_from'], $r['raw_time']);
 }

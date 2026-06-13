@@ -1,12 +1,18 @@
 <?php
-require_once __DIR__ . '/../../includes/config.php';
-require_once __DIR__ . '/../../includes/auth.php';
-require_once __DIR__ . '/../../includes/functions.php';
-requireLogin();
+declare(strict_types=1);
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
 
-$db = getDB();
+use App\Core\Auth;
+use App\Core\Database;
+use App\Core\Session;
+use App\Helpers\Format;
+use App\Helpers\Badge;
+
+Auth::requireLogin();
+
+$pdo = Database::getInstance();
 $id = (int)($_GET['id'] ?? 0);
-$stmt = $db->prepare("
+$stmt = $pdo->prepare("
     SELECT i.*, c.name as category_name, c.code as category_code, c.color as category_color,
            l.name as location_name, l.building, l.floor, l.room,
            u1.full_name as created_by_name, u2.full_name as updated_by_name
@@ -19,18 +25,18 @@ $stmt = $db->prepare("
 ");
 $stmt->execute([$id]);
 $item = $stmt->fetch();
-if (!$item) { flashMessage('error', 'Barang tidak ditemukan.'); header('Location: index.php'); exit; }
+if (!$item) { Session::flash('error', 'Barang tidak ditemukan.'); header('Location: index.php'); exit; }
 
 // Unit stats
 $unitStats = [];
-$usRows = $db->prepare("SELECT status, COUNT(*) as cnt FROM item_units WHERE item_id = ? GROUP BY status");
+$usRows = $pdo->prepare("SELECT status, COUNT(*) as cnt FROM item_units WHERE item_id = ? GROUP BY status");
 $usRows->execute([$id]);
 foreach ($usRows->fetchAll() as $r) { $unitStats[$r['status']] = (int)$r['cnt']; }
 $totalUnits  = array_sum($unitStats);
 $catCode     = $item['category_code'] ?? '';
 
 // Procurement batches (grouped by acquired_date + supplier + purchase_price)
-$procStmt = $db->prepare("
+$procStmt = $pdo->prepare("
     SELECT
         acquired_date,
         supplier,
@@ -47,7 +53,7 @@ $procStmt->execute([$id]);
 $procBatches = $procStmt->fetchAll();
 
 // Transaction history
-$txHistory = $db->prepare("
+$txHistory = $pdo->prepare("
     SELECT t.*, u.full_name as user_name
     FROM transactions t
     LEFT JOIN users u ON t.requested_by = u.id
@@ -58,14 +64,14 @@ $txHistory->execute([$id]);
 $transactions = $txHistory->fetchAll();
 
 // Maintenance history
-$maintHistory = $db->prepare("
+$maintHistory = $pdo->prepare("
     SELECT * FROM maintenance WHERE item_id = ? ORDER BY created_at DESC LIMIT 5
 ");
 $maintHistory->execute([$id]);
 $maintenance = $maintHistory->fetchAll();
 
 $pageTitle = 'Detail Barang';
-include __DIR__ . '/../../includes/header.php';
+include dirname(__DIR__, 2) . '/includes/header.php';
 ?>
 
 <div class="page-header">
@@ -77,11 +83,11 @@ include __DIR__ . '/../../includes/header.php';
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path d="M9 18l6-6-6-6"/></svg>
       Detail
     </div>
-    <h2><?= sanitize($item['name']) ?></h2>
-    <p class="mono"><?= sanitize($item['code']) ?></p>
+    <h2><?= Format::escape($item['name']) ?></h2>
+    <p class="mono"><?= Format::escape($item['code']) ?></p>
   </div>
   <div class="btn-group">
-    <?php if (isAdmin()): ?>
+    <?php if (Auth::isAdmin()): ?>
     <?php endif; ?>
     <a href="<?= APP_URL ?>/modules/transactions/form.php?item_id=<?= $item['id'] ?>" class="btn btn-primary">
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
@@ -102,8 +108,8 @@ include __DIR__ . '/../../includes/header.php';
       <div class="card-header">
         <div class="card-title">Informasi Barang</div>
         <div class="btn-group">
-          <?= conditionBadge($item['condition']) ?>
-          <?= statusBadge($item['status']) ?>
+          <?= Badge::condition($item['condition']) ?>
+          <?= Badge::status($item['status']) ?>
         </div>
       </div>
       <div class="card-body">
@@ -112,7 +118,7 @@ include __DIR__ . '/../../includes/header.php';
           <div style="width: 180px; flex-shrink: 0;">
             <div class="item-image-box">
               <?php if ($item['image']): ?>
-              <img src="<?= UPLOAD_URL . sanitize($item['image']) ?>" alt="<?= sanitize($item['name']) ?>">
+              <img src="<?= UPLOAD_URL . Format::escape($item['image']) ?>" alt="<?= Format::escape($item['name']) ?>">
               <?php else: ?>
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10"/></svg>
               <?php endif; ?>
@@ -132,7 +138,7 @@ include __DIR__ . '/../../includes/header.php';
               foreach ($fields as [$label, $val]): ?>
               <div class="detail-field">
                 <label><?= $label ?></label>
-                <span><?= sanitize($val) ?></span>
+                <span><?= Format::escape($val) ?></span>
               </div>
               <?php endforeach; ?>
             </div>
@@ -142,7 +148,7 @@ include __DIR__ . '/../../includes/header.php';
         <?php if ($item['description']): ?>
         <div style="margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border);">
           <label class="form-label" style="display:block; margin-bottom: 6px;">Deskripsi</label>
-          <p style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6;"><?= nl2br(sanitize($item['description'])) ?></p>
+          <p style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6;"><?= nl2br(Format::escape($item['description'])) ?></p>
         </div>
         <?php endif; ?>
       </div>
@@ -219,8 +225,8 @@ include __DIR__ . '/../../includes/header.php';
           <?php endforeach; ?>
         </div>
         <div style="font-size:0.78rem;color:var(--text-muted);">
-          Format: <code style="color:var(--accent-light);"><?= sanitize($pfx) ?>-U001</code> &mdash;
-          <code style="color:var(--accent-light);"><?= sanitize($pfx) ?>-U<?= str_pad($totalUnits,3,'0',STR_PAD_LEFT) ?></code>
+          Format: <code style="color:var(--accent-light);"><?= Format::escape($pfx) ?>-U001</code> &mdash;
+          <code style="color:var(--accent-light);"><?= Format::escape($pfx) ?>-U<?= str_pad((string)$totalUnits,3,'0',STR_PAD_LEFT) ?></code>
         </div>
       </div>
     </div>
@@ -248,15 +254,15 @@ include __DIR__ . '/../../includes/header.php';
             <?php
             $pfxProc = ($item['category_code'] ?? '') ? $item['category_code'].'-'.$item['code'] : $item['code'];
             foreach ($procBatches as $b):
-              $fromCode = $pfxProc . '-U' . str_pad($b['unit_from'], 3, '0', STR_PAD_LEFT);
-              $toCode   = $pfxProc . '-U' . str_pad($b['unit_to'],   3, '0', STR_PAD_LEFT);
+              $fromCode = $pfxProc . '-U' . str_pad((string)$b['unit_from'], 3, '0', STR_PAD_LEFT);
+              $toCode   = $pfxProc . '-U' . str_pad((string)$b['unit_to'],   3, '0', STR_PAD_LEFT);
             ?>
             <tr>
-              <td style="white-space:nowrap;"><?= $b['acquired_date'] ? formatDate($b['acquired_date']) : '<span style="color:var(--text-muted)">—</span>' ?></td>
-              <td><?= $b['supplier'] ? sanitize($b['supplier']) : '<span style="color:var(--text-muted)">—</span>' ?></td>
+              <td style="white-space:nowrap;"><?= $b['acquired_date'] ? Format::date($b['acquired_date']) : '<span style="color:var(--text-muted)">—</span>' ?></td>
+              <td><?= $b['supplier'] ? Format::escape($b['supplier']) : '<span style="color:var(--text-muted)">—</span>' ?></td>
               <td style="white-space:nowrap;">
                 <?php if ($b['purchase_price'] !== null): ?>
-                  <span style="font-weight:600;">Rp <?= number_format($b['purchase_price'], 0, ',', '.') ?></span>
+                  <span style="font-weight:600;">Rp <?= number_format((float)$b['purchase_price'], 0, ',', '.') ?></span>
                 <?php else: ?>
                   <span style="color:var(--text-muted)">—</span>
                 <?php endif; ?>
@@ -264,9 +270,9 @@ include __DIR__ . '/../../includes/header.php';
               <td style="text-align:center;font-weight:700;"><?= $b['unit_count'] ?></td>
               <td style="font-family:var(--font-mono,monospace);font-size:0.78rem;color:var(--accent-light);">
                 <?php if ($b['unit_from'] === $b['unit_to']): ?>
-                  <?= sanitize($fromCode) ?>
+                  <?= Format::escape($fromCode) ?>
                 <?php else: ?>
-                  <?= sanitize($fromCode) ?> &mdash; <?= sanitize($toCode) ?>
+                  <?= Format::escape($fromCode) ?> &mdash; <?= Format::escape($toCode) ?>
                 <?php endif; ?>
               </td>
             </tr>
@@ -299,8 +305,8 @@ include __DIR__ . '/../../includes/header.php';
         <div class="activity-item">
           <div class="activity-dot <?= $typeColors[$tx['type']] ?? 'blue' ?>"></div>
           <div class="activity-content">
-            <div class="activity-title"><?= $typeLabels[$tx['type']] ?? $tx['type'] ?> &bull; <?= sanitize($tx['borrower_name'] ?? $tx['user_name'] ?? '-') ?></div>
-            <div class="activity-meta"><?= formatDateTime($tx['created_at']) ?> &bull; <?= statusBadge($tx['status']) ?></div>
+            <div class="activity-title"><?= $typeLabels[$tx['type']] ?? $tx['type'] ?> &bull; <?= Format::escape($tx['borrower_name'] ?? $tx['user_name'] ?? '-') ?></div>
+            <div class="activity-meta"><?= Format::datetime($tx['created_at']) ?> &bull; <?= Badge::status($tx['status']) ?></div>
           </div>
         </div>
         <?php endforeach; ?>
@@ -324,8 +330,8 @@ include __DIR__ . '/../../includes/header.php';
         <div class="activity-item">
           <div class="activity-dot <?= $m['status'] === 'completed' ? 'green' : ($m['priority'] === 'critical' ? 'red' : 'amber') ?>"></div>
           <div class="activity-content">
-            <div class="activity-title"><?= sanitize($m['title']) ?></div>
-            <div class="activity-meta"><?= formatDate($m['created_at']) ?> &bull; <?= statusBadge($m['status']) ?> &bull; <?= priorityBadge($m['priority']) ?></div>
+            <div class="activity-title"><?= Format::escape($m['title']) ?></div>
+            <div class="activity-meta"><?= Format::date($m['created_at']) ?> &bull; <?= Badge::status($m['status']) ?> &bull; <?= Badge::priority($m['priority']) ?></div>
           </div>
         </div>
         <?php endforeach; ?>
@@ -335,4 +341,4 @@ include __DIR__ . '/../../includes/header.php';
   </div>
 </div>
 
-<?php include __DIR__ . '/../../includes/footer.php'; ?>
+<?php include dirname(__DIR__, 2) . '/includes/footer.php'; ?>

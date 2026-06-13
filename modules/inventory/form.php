@@ -1,20 +1,28 @@
 <?php
-require_once __DIR__ . '/../../includes/config.php';
-require_once __DIR__ . '/../../includes/auth.php';
-require_once __DIR__ . '/../../includes/functions.php';
-requireRole('superadmin', 'admin');
+declare(strict_types=1);
+require_once dirname(__DIR__, 2) . '/bootstrap.php';
 
-$db = getDB();
+use App\Core\Auth;
+use App\Core\Database;
+use App\Core\Session;
+use App\Helpers\Format;
+use App\Helpers\Upload;
+use App\Models\Item;
+use App\Services\AuditService;
+
+Auth::requireRole('superadmin', 'admin');
+
+$pdo = Database::getInstance();
 
 $id = (int)($_GET['id'] ?? 0);
 $item = null;
 $isEdit = false;
 
 if ($id) {
-    $stmt = $db->prepare("SELECT * FROM items WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT * FROM items WHERE id = ?");
     $stmt->execute([$id]);
     $item = $stmt->fetch();
-    if (!$item) { flashMessage('error', 'Barang tidak ditemukan.'); header('Location: index.php'); exit; }
+    if (!$item) { Session::flash('error', 'Barang tidak ditemukan.'); header('Location: index.php'); exit; }
     $isEdit = true;
 }
 
@@ -74,13 +82,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$data['name']) $errors[] = 'Nama barang wajib diisi.';
 
     // Check unique code
-    $codeCheck = $db->prepare("SELECT id FROM items WHERE code = ? AND id != ?");
+    $codeCheck = $pdo->prepare("SELECT id FROM items WHERE code = ? AND id != ?");
     $codeCheck->execute([$data['code'], $id]);
     if ($codeCheck->fetch()) $errors[] = 'Kode barang sudah digunakan.';
 
     // When editing: quantity cannot go below units that are actively in use
     if ($isEdit) {
-        $activeStmt = $db->prepare("
+        $activeStmt = $pdo->prepare("
             SELECT COUNT(*) FROM item_units
             WHERE item_id = ? AND status IN ('reserved','borrowed','maintenance')
         ");
@@ -94,7 +102,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Handle image upload
     $imagePath = $item['image'] ?? null;
     if (!empty($_FILES['image']['name'])) {
-        $upload = uploadImage($_FILES['image'], 'items');
+        $upload = Upload::image($_FILES['image'], 'items');
         if (isset($upload['error'])) {
             $errors[] = $upload['error'];
         } else {
@@ -110,49 +118,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $codeChanged = $data['code'] !== $item['code'];
             $catChanged  = (int)$data['category_id'] !== (int)$item['category_id'];
 
-            // Keep existing quantity_available as placeholder; syncItemAvailability will correct it
+            // Keep existing quantity_available as placeholder; syncAvailability will correct it
             $data['quantity_available'] = (int)$item['quantity_available'];
-            $data['updated_by'] = $_SESSION['user_id'];
+            $data['updated_by'] = Auth::id();
 
             $sql = "UPDATE items SET " . implode(', ', array_map(fn($k) => "`$k` = ?", array_keys($data))) . ", updated_at = NOW() WHERE id = ?";
-            $stmt = $db->prepare($sql);
+            $stmt = $pdo->prepare($sql);
             $stmt->execute(array_merge(array_values($data), [$id]));
 
             // 1. If item code or category changed, rebuild all existing unit full_codes first
             if ($codeChanged || $catChanged) {
-                rebuildUnitFullCodes($db, $id, $data['code'], $data['category_id']);
+                (new Item())->rebuildUnitCodes($id, $data['code'], $data['category_id']);
             }
 
             // 2. Generate new units if quantity increased (uses updated prefix)
-            generateMissingUnits($db, $id, $data['code'], $data['category_id'], $data['quantity'], $data['condition'], $data['location_id']);
+            (new Item())->generateUnits($id, $data['code'], $data['category_id'], $data['quantity'], $data['condition'], $data['location_id']);
 
             // 3. Sync quantity_available from actual unit statuses
-            syncItemAvailability($db, $id);
+            (new Item())->syncAvailability($id);
 
-            auditLog('UPDATE', 'inventory', $id, 'Item updated: ' . $data['name'], $oldData, $data);
-            flashMessage('success', 'Barang berhasil diperbarui.');
+            AuditService::log('UPDATE', 'inventory', $id, 'Item updated: ' . $data['name'], $oldData, $data);
+            Session::flash('success', 'Barang berhasil diperbarui.');
         } else {
             $data['quantity_available'] = $data['quantity'];
-            $data['created_by']         = $_SESSION['user_id'];
+            $data['created_by']         = Auth::id();
 
             $sql  = "INSERT INTO items (" . implode(', ', array_map(fn($k) => "`$k`", array_keys($data))) . ") VALUES (" . implode(', ', array_fill(0, count($data), '?')) . ")";
-            $stmt = $db->prepare($sql);
+            $stmt = $pdo->prepare($sql);
             $stmt->execute(array_values($data));
-            $newId = $db->lastInsertId();
+            $newId = (int)$pdo->lastInsertId();
 
-            $created = generateMissingUnits($db, $newId, $data['code'], $data['category_id'], $data['quantity'], $data['condition'], $data['location_id']);
+            $created = (new Item())->generateUnits($newId, $data['code'], $data['category_id'], $data['quantity'], $data['condition'], $data['location_id']);
 
             // Simpan harga, tanggal beli, dan supplier ke semua unit yang baru dibuat
             $unitPrice    = isset($_POST['unit_price']) && $_POST['unit_price'] !== '' ? abs((float)$_POST['unit_price']) : null;
             $unitSupplier = trim($_POST['supplier'] ?? '') ?: null;
             $unitAcquired = $_POST['purchase_date'] ?: null;
-            $db->prepare("UPDATE item_units SET purchase_price = ?, acquired_date = ?, supplier = ? WHERE item_id = ?")
+            $pdo->prepare("UPDATE item_units SET purchase_price = ?, acquired_date = ?, supplier = ? WHERE item_id = ?")
                ->execute([$unitPrice, $unitAcquired, $unitSupplier, $newId]);
 
-            syncItemAvailability($db, $newId);
+            (new Item())->syncAvailability($newId);
 
-            auditLog('CREATE', 'inventory', $newId, 'Item created: ' . $data['name']);
-            flashMessage('success', 'Barang berhasil ditambahkan dengan ' . $created . ' unit.');
+            AuditService::log('CREATE', 'inventory', $newId, 'Item created: ' . $data['name']);
+            Session::flash('success', 'Barang berhasil ditambahkan dengan ' . $created . ' unit.');
         }
 
         header('Location: index.php');
@@ -161,10 +169,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 
-$categories = $db->query("SELECT * FROM categories ORDER BY name")->fetchAll();
-$locations  = $db->query("SELECT * FROM locations ORDER BY name")->fetchAll();
+$categories = $pdo->query("SELECT * FROM categories ORDER BY name")->fetchAll();
+$locations  = $pdo->query("SELECT * FROM locations ORDER BY name")->fetchAll();
 
-include __DIR__ . '/../../includes/header.php';
+include dirname(__DIR__, 2) . '/includes/header.php';
 ?>
 
 <div class="page-header">
@@ -177,7 +185,7 @@ include __DIR__ . '/../../includes/header.php';
       <?= $isEdit ? 'Edit Barang' : 'Tambah Barang' ?>
     </div>
     <h2><?= $isEdit ? 'Edit Barang' : 'Tambah Barang Baru' ?></h2>
-    <p><?= $isEdit ? 'Perbarui informasi barang: ' . sanitize($item['name']) : 'Tambahkan barang baru ke inventaris' ?></p>
+    <p><?= $isEdit ? 'Perbarui informasi barang: ' . Format::escape($item['name']) : 'Tambahkan barang baru ke inventaris' ?></p>
   </div>
 </div>
 
@@ -186,7 +194,7 @@ include __DIR__ . '/../../includes/header.php';
   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="18" height="18"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
   <div>
     <strong>Terdapat <?= count($errors) ?> kesalahan:</strong>
-    <ul style="margin: 6px 0 0 16px;"><?php foreach ($errors as $e): ?><li><?= sanitize($e) ?></li><?php endforeach; ?></ul>
+    <ul style="margin: 6px 0 0 16px;"><?php foreach ($errors as $e): ?><li><?= Format::escape($e) ?></li><?php endforeach; ?></ul>
   </div>
 </div>
 <?php endif; ?>
@@ -216,7 +224,7 @@ include __DIR__ . '/../../includes/header.php';
               <?php endif; ?>
             </div>
             <input type="text" name="code" id="fieldCode" class="form-control" required
-                   value="<?= sanitize($item['code'] ?? ($_POST['code'] ?? '')) ?>"
+                   value="<?= Format::escape($item['code'] ?? ($_POST['code'] ?? '')) ?>"
                    placeholder="Otomatis dari nama &amp; merek"
                    style="text-transform:uppercase;font-family:var(--font-mono,monospace);"
                    oninput="onCodeInput()" <?= $isEdit ? '' : 'readonly' ?>>
@@ -230,21 +238,21 @@ include __DIR__ . '/../../includes/header.php';
             <div class="form-group" style="margin:0;">
               <label class="form-label">Nama Barang <span class="required">*</span></label>
               <input type="text" name="name" id="fieldName" class="form-control" required
-                     value="<?= sanitize($item['name'] ?? ($_POST['name'] ?? '')) ?>"
+                     value="<?= Format::escape($item['name'] ?? ($_POST['name'] ?? '')) ?>"
                      placeholder="Laptop, Meja Kerja, ..."
                      <?= !$isEdit ? 'oninput="onNameBrandModelInput()"' : '' ?>>
             </div>
             <div class="form-group" style="margin:0;">
               <label class="form-label">Merek / Brand</label>
               <input type="text" name="brand" id="fieldBrand" class="form-control"
-                     value="<?= sanitize($item['brand'] ?? ($_POST['brand'] ?? '')) ?>"
+                     value="<?= Format::escape($item['brand'] ?? ($_POST['brand'] ?? '')) ?>"
                      placeholder="Dell, HP, Samsung..."
                      <?= !$isEdit ? 'oninput="onNameBrandModelInput()"' : '' ?>>
             </div>
             <div class="form-group" style="margin:0;">
               <label class="form-label">Model</label>
               <input type="text" name="model" id="fieldModel" class="form-control"
-                     value="<?= sanitize($item['model'] ?? ($_POST['model'] ?? '')) ?>"
+                     value="<?= Format::escape($item['model'] ?? ($_POST['model'] ?? '')) ?>"
                      placeholder="Latitude 5520, X-Series..."
                      <?= !$isEdit ? 'oninput="onNameBrandModelInput()"' : '' ?>>
             </div>
@@ -261,7 +269,7 @@ include __DIR__ . '/../../includes/header.php';
           <div class="form-group" style="margin:0;">
             <label class="form-label">Deskripsi</label>
             <textarea name="description" class="form-control" rows="3"
-                      placeholder="Deskripsi singkat barang..."><?= sanitize($item['description'] ?? ($_POST['description'] ?? '')) ?></textarea>
+                      placeholder="Deskripsi singkat barang..."><?= Format::escape($item['description'] ?? ($_POST['description'] ?? '')) ?></textarea>
           </div>
         </div>
       </div>
@@ -277,7 +285,7 @@ include __DIR__ . '/../../includes/header.php';
               <select name="category_id" id="fieldCategory" class="form-control" onchange="updateCodePreview()">
                 <option value="">— Pilih Kategori —</option>
                 <?php foreach ($categories as $cat): ?>
-                <option value="<?= $cat['id'] ?>" <?= ($item['category_id'] ?? 0) == $cat['id'] ? 'selected' : '' ?>><?= sanitize($cat['name']) ?></option>
+                <option value="<?= $cat['id'] ?>" <?= ($item['category_id'] ?? 0) == $cat['id'] ? 'selected' : '' ?>><?= Format::escape($cat['name']) ?></option>
                 <?php endforeach; ?>
               </select>
             </div>
@@ -286,7 +294,7 @@ include __DIR__ . '/../../includes/header.php';
               <select name="location_id" class="form-control">
                 <option value="">— Pilih Lokasi —</option>
                 <?php foreach ($locations as $loc): ?>
-                <option value="<?= $loc['id'] ?>" <?= ($item['location_id'] ?? 0) == $loc['id'] ? 'selected' : '' ?>><?= sanitize($loc['name']) ?></option>
+                <option value="<?= $loc['id'] ?>" <?= ($item['location_id'] ?? 0) == $loc['id'] ? 'selected' : '' ?>><?= Format::escape($loc['name']) ?></option>
                 <?php endforeach; ?>
               </select>
             </div>
@@ -322,7 +330,7 @@ include __DIR__ . '/../../includes/header.php';
       <!-- Preview Kode Unit (create only) -->
       <div class="card" id="unitPreviewCard">
         <div class="card-header">
-          <div class="card-title">Preview Kode Unit</div>
+          <div class="card-title">Preview Unit</div>
           <span id="unitPreviewCount" style="font-size:0.78rem;color:var(--text-muted);"></span>
         </div>
         <div class="card-body">
@@ -337,7 +345,7 @@ include __DIR__ . '/../../includes/header.php';
       <?php endif; ?>
 
       <?php if ($isEdit):
-        $unitStats2 = $db->prepare("SELECT status, COUNT(*) as cnt FROM item_units WHERE item_id = ? GROUP BY status");
+        $unitStats2 = $pdo->prepare("SELECT status, COUNT(*) as cnt FROM item_units WHERE item_id = ? GROUP BY status");
         $unitStats2->execute([$id]);
         $uStats = ['available'=>0,'borrowed'=>0,'reserved'=>0,'maintenance'=>0,'damaged'=>0,'disposed'=>0,'lost'=>0];
         foreach ($unitStats2->fetchAll() as $r) $uStats[$r['status']] = (int)$r['cnt'];
@@ -346,7 +354,7 @@ include __DIR__ . '/../../includes/header.php';
       <!-- Kode Unit (edit only) -->
       <div class="card">
         <div class="card-header">
-          <div class="card-title">Kode Unit</div>
+          <div class="card-title">Unit</div>
           <span style="font-size:0.78rem;color:var(--text-muted);"><?= $uTotal ?> unit</span>
         </div>
         <div class="card-body" style="padding-bottom:14px;">
@@ -412,7 +420,7 @@ include __DIR__ . '/../../includes/header.php';
             <div style="width:120px;flex-shrink:0;">
               <div id="imgPreview" style="width:120px;height:90px;background:var(--bg-elevated);border-radius:var(--radius-sm);overflow:hidden;display:flex;align-items:center;justify-content:center;border:2px dashed var(--border);margin-bottom:8px;">
                 <?php if (!empty($item['image'])): ?>
-                <img src="<?= UPLOAD_URL . sanitize($item['image']) ?>" style="width:100%;height:100%;object-fit:cover;" id="previewImg">
+                <img src="<?= UPLOAD_URL . Format::escape($item['image']) ?>" style="width:100%;height:100%;object-fit:cover;" id="previewImg">
                 <?php else: ?>
                 <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="color:var(--text-disabled);"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5z"/></svg>
                 <?php endif; ?>
@@ -427,7 +435,7 @@ include __DIR__ . '/../../includes/header.php';
             <div style="flex:1;">
               <label class="form-label">Catatan</label>
               <textarea name="notes" class="form-control" rows="5"
-                        placeholder="Catatan tambahan..."><?= sanitize($item['notes'] ?? '') ?></textarea>
+                        placeholder="Catatan tambahan..."><?= Format::escape($item['notes'] ?? '') ?></textarea>
             </div>
           </div>
         </div>
@@ -463,7 +471,7 @@ function previewImage(input) {
 // ── Category code map ─────────────────────────────────────────
 const catCodes = <?= json_encode(
     array_column(
-        $db->query("SELECT id, code FROM categories")->fetchAll(PDO::FETCH_ASSOC),
+        $pdo->query("SELECT id, code FROM categories")->fetchAll(\PDO::FETCH_ASSOC),
         'code', 'id'
     )
 ) ?>;
@@ -575,4 +583,4 @@ document.getElementById('fieldQty')?.addEventListener('input', updateCodePreview
 updateCodePreview();
 </script>
 
-<?php include __DIR__ . '/../../includes/footer.php'; ?>
+<?php include dirname(__DIR__, 2) . '/includes/footer.php'; ?>
