@@ -1,0 +1,41 @@
+services:
+  app:
+    build:
+      context: .
+    container_name: unistock_app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_URL: http://localhost:8080
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: unistock
+      DB_PASS: unistock
+      DB_NAME: unistock
+    ports:
+      - "8080:80"
+    volumes:
+      - ./:/var/www/html
+
+  db:
+    image: mariadb:10.11
+    container_name: unistock_db
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_DATABASE: unistock
+      MARIADB_USER: unistock
+      MARIADB_PASSWORD: unistock
+    ports:
+      - "3307:3306"
+    volumes:
+      - unistock_db_data:/var/lib/mysql
+      - ./database/unistock.sql:/docker-entrypoint-initdb.d/01-unistock.sql:ro
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  unistock_db_data:

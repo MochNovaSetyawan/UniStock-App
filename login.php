@@ -33,7 +33,7 @@ if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && $_SERVER['REQUEST_METHOD'] === 
 }
 
 $appName = Setting::get('app_name', 'Unistock');
-$uniName = Setting::get('university_name', 'Universitas Nusantara');
+$uniName = Setting::get('university_name', 'Universitas Esa Unggul');
 $appLogo = Setting::get('app_logo', '');
 $logoUrl = ($appLogo && file_exists(UPLOAD_PATH . $appLogo)) ? UPLOAD_URL . $appLogo : '';
 ?>

@@ -9,7 +9,7 @@ use App\Models\Setting;
 use App\Services\NotificationService;
 
 $appName     = Setting::get('app_name', 'Unistock');
-$uniName     = Setting::get('university_name', 'Universitas Nusantara');
+$uniName     = Setting::get('university_name', 'Universitas Esa Unggul');
 $appLogo     = Setting::get('app_logo', '');
 $currentUser = Auth::user();
 $notifCount  = NotificationService::countUnread();
